@@ -54,36 +54,31 @@ import (
 	"flag"
 	"log"
 
-	// "mime"
+	"mime"
 	"os"
-	// "path"
+	"path"
 	"path/filepath"
 	"strings"
+
+	"context"
+
+	"bifrost-gov/pkg/database"
+	"bifrost-gov/plugins/auth"
+	"bifrost-gov/plugins/logging"
 
 	"github.com/fasthttp/router"
 	bifrost "github.com/maximhq/bifrost/core"
 	schemas "github.com/maximhq/bifrost/core/schemas"
-	"github.com/maximhq/bifrost/plugins/maxim"
 	"github.com/maximhq/bifrost/transports/bifrost-http/handlers"
 	"github.com/maximhq/bifrost/transports/bifrost-http/lib"
-	"github.com/maximhq/bifrost/transports/bifrost-http/plugins/logging"
-	"github.com/maximhq/bifrost/transports/bifrost-http/plugins/telemetry"
-	"context"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/collectors"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/valyala/fasthttp"
-	"github.com/valyala/fasthttp/fasthttpadaptor"
+	"gorm.io/gorm"
 )
-
-// go:embed all:ui
-// var uiContent embed.FS
 
 // Command line flags
 var (
-	port          string   // Port to run the server on
-	appDir        string   // Application data directory
-	pluginsToLoad []string // Plugins to load
+	port   string // Port to run the server on
+	appDir string // Application data directory
 )
 
 // accountWrapper wraps lib.BaseAccount to implement the schemas.Account interface
@@ -102,27 +97,10 @@ func (a *accountWrapper) GetKeysForProvider(ctx *context.Context, providerKey sc
 // It sets up the following flags:
 //   - port: Server port (default: 8080)
 //   - app-dir: Application data directory (default: current directory)
-//   - plugins: Comma-separated list of plugins to load
 func init() {
-	pluginString := ""
-
 	flag.StringVar(&port, "port", "8080", "Port to run the server on")
 	flag.StringVar(&appDir, "app-dir", ".", "Application data directory (contains config.json and logs)")
-	flag.StringVar(&pluginString, "plugins", "", "Comma separated list of plugins to load")
 	flag.Parse()
-
-	pluginsToLoad = strings.Split(pluginString, ",")
-}
-
-// registerCollectorSafely attempts to register a Prometheus collector,
-// handling the case where it may already be registered.
-// It logs any errors that occur during registration, except for AlreadyRegisteredError.
-func registerCollectorSafely(collector prometheus.Collector) {
-	if err := prometheus.Register(collector); err != nil {
-		if _, ok := err.(prometheus.AlreadyRegisteredError); !ok {
-			log.Printf("Failed to register collector: %v", err)
-		}
-	}
 }
 
 // corsMiddleware handles CORS headers for localhost requests
@@ -151,88 +129,81 @@ func corsMiddleware(next fasthttp.RequestHandler) fasthttp.RequestHandler {
 	}
 }
 
-// uiHandler serves the embedded Next.js UI files
-// func uiHandler(ctx *fasthttp.RequestCtx) {
-// 	// Get the request path
-// 	requestPath := string(ctx.Path())
+// uiHandler serves the local index.html file
+func uiHandler(ctx *fasthttp.RequestCtx) {
+	// Get the request path
+	requestPath := string(ctx.Path())
 
-// 	// Clean the path to prevent directory traversal
-// 	cleanPath := path.Clean(requestPath)
+	// Clean the path to prevent directory traversal
+	cleanPath := path.Clean(requestPath)
 
-// 	// Handle .txt files (Next.js RSC payload files) - map from /{page}.txt to /{page}/index.txt
-// 	if strings.HasSuffix(cleanPath, ".txt") {
-// 		// Remove .txt extension and add /index.txt
-// 		basePath := strings.TrimSuffix(cleanPath, ".txt")
-// 		if basePath == "/" || basePath == "" {
-// 			basePath = "/index"
-// 		}
-// 		cleanPath = basePath + "/index.txt"
-// 	}
+	// For root path or any SPA route, serve index.html
+	if cleanPath == "/" || !strings.Contains(filepath.Base(cleanPath), ".") {
+		// Serve index.html for root and SPA routes
+		data, err := os.ReadFile("index.html")
+		if err != nil {
+			ctx.SetStatusCode(fasthttp.StatusNotFound)
+			ctx.SetBodyString("404 - index.html not found")
+			return
+		}
 
-// 	// Remove leading slash and add ui prefix
-// 	if cleanPath == "/" {
-// 		cleanPath = "ui/index.html"
-// 	} else {
-// 		cleanPath = "ui" + cleanPath
-// 	}
+		// Set content type for HTML
+		ctx.SetContentType("text/html; charset=utf-8")
 
-// 	// Check if this is a static asset request (has file extension)
-// 	hasExtension := strings.Contains(filepath.Base(cleanPath), ".")
+		// Set cache headers for HTML (no cache for SPA)
+		ctx.Response.Header.Set("Cache-Control", "no-cache")
 
-// 	// Try to read the file from embedded filesystem
-// 	data, err := uiContent.ReadFile(cleanPath)
-// 	if err != nil {
+		// Send the file content
+		ctx.SetBody(data)
+		return
+	}
 
-// 		// If it's a static asset (has extension) and not found, return 404
-// 		if hasExtension {
-// 			ctx.SetStatusCode(fasthttp.StatusNotFound)
-// 			ctx.SetBodyString("404 - Static asset not found: " + requestPath)
-// 			return
-// 		}
+	// For other files (CSS, JS, images, etc.), try to serve them from the current directory
+	// Remove leading slash for file system access
+	filePath := strings.TrimPrefix(cleanPath, "/")
 
-// 		// For routes without extensions (SPA routing), try {path}/index.html first
-// 		if !hasExtension {
-// 			indexPath := cleanPath + "/index.html"
-// 			data, err = uiContent.ReadFile(indexPath)
-// 			if err == nil {
-// 				cleanPath = indexPath
-// 			} else {
-// 				// If that fails, serve root index.html as fallback
-// 				data, err = uiContent.ReadFile("ui/index.html")
-// 				if err != nil {
-// 					ctx.SetStatusCode(fasthttp.StatusNotFound)
-// 					ctx.SetBodyString("404 - File not found")
-// 					return
-// 				}
-// 				cleanPath = "ui/index.html"
-// 			}
-// 		} else {
-// 			ctx.SetStatusCode(fasthttp.StatusNotFound)
-// 			ctx.SetBodyString("404 - File not found")
-// 			return
-// 		}
-// 	}
+	// Check if file exists
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		// File not found, serve index.html as fallback for SPA routing
+		data, err := os.ReadFile("index.html")
+		if err != nil {
+			ctx.SetStatusCode(fasthttp.StatusNotFound)
+			ctx.SetBodyString("404 - File not found")
+			return
+		}
 
-// 	// Set content type based on file extension
-// 	ext := filepath.Ext(cleanPath)
-// 	contentType := mime.TypeByExtension(ext)
-// 	if contentType == "" {
-// 		contentType = "application/octet-stream"
-// 	}
-// 	ctx.SetContentType(contentType)
+		ctx.SetContentType("text/html; charset=utf-8")
+		ctx.Response.Header.Set("Cache-Control", "no-cache")
+		ctx.SetBody(data)
+		return
+	}
 
-// 	// Set cache headers for static assets
-// 	if strings.HasPrefix(cleanPath, "ui/_next/static/") {
-// 		ctx.Response.Header.Set("Cache-Control", "public, max-age=31536000, immutable")
-// 	} else if ext == ".html" {
-// 		ctx.Response.Header.Set("Cache-Control", "no-cache")
-// 	} else {
-// 		ctx.Response.Header.Set("Cache-Control", "public, max-age=3600")
-// 	}
+	// Read the file
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
+		ctx.SetBodyString("500 - Internal server error")
+		return
+	}
 
-// 	// Send the file content
-// 	ctx.SetBody(data)
-// }
+	// Set content type based on file extension
+	ext := filepath.Ext(filePath)
+	contentType := mime.TypeByExtension(ext)
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	ctx.SetContentType(contentType)
+
+	// Set cache headers
+	if ext == ".html" {
+		ctx.Response.Header.Set("Cache-Control", "no-cache")
+	} else {
+		ctx.Response.Header.Set("Cache-Control", "public, max-age=3600")
+	}
+
+	// Send the file content
+	ctx.SetBody(data)
+}
 
 // main is the entry point of the application.
 // It:
@@ -254,11 +225,6 @@ func main() {
 
 	// Derive paths from app-dir
 	configPath := filepath.Join(appDir, "config.json")
-	logDir := filepath.Join(appDir, "logs")
-
-	// Register Prometheus collectors
-	registerCollectorSafely(collectors.NewGoCollector())
-	registerCollectorSafely(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 
 	logger := bifrost.NewDefaultLogger(schemas.LogLevelInfo)
 
@@ -281,53 +247,38 @@ func main() {
 
 	loadedPlugins := []schemas.Plugin{}
 
-	for _, plugin := range pluginsToLoad {
-		switch strings.ToLower(plugin) {
-		case "maxim":
-			if os.Getenv("MAXIM_LOG_REPO_ID") == "" {
-				log.Println("warning: maxim log repo id is required to initialize maxim plugin")
-				continue
-			}
-			if os.Getenv("MAXIM_API_KEY") == "" {
-				log.Println("warning: maxim api key is required in environment variable MAXIM_API_KEY to initialize maxim plugin")
-				continue
-			}
-
-			maximPlugin, err := maxim.NewMaximLoggerPlugin(os.Getenv("MAXIM_API_KEY"), os.Getenv("MAXIM_LOG_REPO_ID"))
-			if err != nil {
-				log.Printf("warning: failed to initialize maxim plugin: %v", err)
-				continue
-			}
-
-			loadedPlugins = append(loadedPlugins, maximPlugin)
-		}
-	}
-
-	telemetry.InitPrometheusMetrics(store.ClientConfig.PrometheusLabels)
-	log.Println("Prometheus Go/Process collectors registered.")
-
-	promPlugin := telemetry.NewPrometheusPlugin()
-
-	var loggingPlugin *logging.LoggerPlugin
-	var loggingHandler *handlers.LoggingHandler
-	var wsHandler *handlers.WebSocketHandler
-
-	if store.ClientConfig.EnableLogging {
-		// Initialize logging plugin with app-dir based path
-		loggingConfig := &logging.Config{
-			DatabasePath: logDir,
-		}
-
-		var err error
-		loggingPlugin, err = logging.NewLoggerPlugin(loggingConfig, logger)
+	// Initialize shared database connection if available
+	databaseURL := os.Getenv("DATABASE_URL")
+	var sharedDB *gorm.DB
+	if databaseURL != "" {
+		db, err := database.NewPostgresConnection(databaseURL)
 		if err != nil {
-			log.Fatalf("failed to initialize logging plugin: %v", err)
+			log.Fatalf("Failed to create database connection: %v", err)
 		}
+		sharedDB = db
+		log.Println("Shared database connection established")
 
-		loadedPlugins = append(loadedPlugins, promPlugin, loggingPlugin)
+		// Initialize auth plugin for API request validation
+		oidcConfig := &auth.OIDCConfig{
+			IssuerURL:   "http://localhost:5556",
+			ClientID:    "bifrost-client",
+			DatabaseURL: databaseURL,
+		}
+		authPlugin, err := auth.NewAuthPluginWithDB(oidcConfig, sharedDB)
+		if err != nil {
+			log.Fatalf("Failed to create auth plugin: %v", err)
+		}
+		loadedPlugins = append(loadedPlugins, authPlugin)
+		log.Println("Auth plugin initialized for API request validation")
 
-		loggingHandler = handlers.NewLoggingHandler(loggingPlugin.GetPluginLogManager(), logger)
-		wsHandler = handlers.NewWebSocketHandler(loggingPlugin.GetPluginLogManager(), logger)
+		// Initialize secure logging plugin with shared database
+		if store.ClientConfig.EnableLogging {
+			secureLoggingPlugin := logging.NewSecureLoggingPlugin(sharedDB)
+			loadedPlugins = append(loadedPlugins, secureLoggingPlugin)
+			log.Println("Secure logging plugin initialized with PostgreSQL")
+		}
+	} else {
+		log.Println("DATABASE_URL not set, skipping database-dependent plugins")
 	}
 
 	client, err := bifrost.Init(schemas.BifrostConfig{
@@ -350,36 +301,48 @@ func main() {
 	mcpHandler := handlers.NewMCPHandler(client, logger, store)
 	integrationHandler := handlers.NewIntegrationHandler(client)
 	configHandler := handlers.NewConfigHandler(client, logger, store, configPath)
-
-	// Set up WebSocket callback for real-time log updates
-	if wsHandler != nil && loggingPlugin != nil {
-		loggingPlugin.SetLogCallback(wsHandler.BroadcastLogUpdate)
-
-		// Start WebSocket heartbeat
-		wsHandler.StartHeartbeat()
+	
+	// Create auth handler with shared database if available
+	var authHandler *auth.AuthHandler
+	if sharedDB != nil {
+		authHandler = auth.NewAuthHandlerWithDB(store, sharedDB)
+		log.Println("Auth handler configured with shared database access")
+	} else {
+		authHandler = auth.NewAuthHandler(store)
 	}
+	
+	// Create logging handler if database is available
+	var loggingHandler *logging.LoggingHandler
+	if sharedDB != nil {
+		loggingHandler = logging.NewLoggingHandler(sharedDB)
+		log.Println("Logging handler configured with shared database access")
+	}
+
+	// Note: WebSocket logging handlers removed in favor of secure PostgreSQL logging
 
 	r := router.New()
 
-	// Register all handler routes
+	// Register all handler routes FIRST (API routes take precedence)
 	providerHandler.RegisterRoutes(r)
 	completionHandler.RegisterRoutes(r)
 	mcpHandler.RegisterRoutes(r)
 	integrationHandler.RegisterRoutes(r)
 	configHandler.RegisterRoutes(r)
+
+	// Register authentication routes
+	authHandler.RegisterRoutes(r)
+	
+	// Register logging routes if available
 	if loggingHandler != nil {
 		loggingHandler.RegisterRoutes(r)
 	}
-	if wsHandler != nil {
-		wsHandler.RegisterRoutes(r)
-	}
 
-	// Add Prometheus /metrics endpoint
-	r.GET("/metrics", fasthttpadaptor.NewFastHTTPHandler(promhttp.Handler()))
-
-	// Add UI routes - serve the embedded Next.js build
-	// r.GET("/", uiHandler)
-	// r.GET("/{filepath:*}", uiHandler)
+	// Add UI routes - serve the local index.html (these should be LAST)
+	r.GET("/", uiHandler)
+	// Use a more specific pattern to avoid catching API routes
+	r.GET("/ui/{filepath:*}", uiHandler)
+	r.GET("/app/{filepath:*}", uiHandler)
+	r.GET("/static/{filepath:*}", uiHandler)
 
 	r.NotFound = func(ctx *fasthttp.RequestCtx) {
 		handlers.SendError(ctx, fasthttp.StatusNotFound, "Route not found: "+string(ctx.Path()), logger)
@@ -391,10 +354,6 @@ func main() {
 	log.Printf("Successfully started bifrost. Serving UI on http://localhost:%s", port)
 	if err := fasthttp.ListenAndServe(":"+port, corsHandler); err != nil {
 		log.Fatalf("Error starting server: %v", err)
-	}
-
-	if wsHandler != nil {
-		wsHandler.Stop()
 	}
 
 	client.Cleanup()

@@ -10,6 +10,8 @@
 
 # Project binary
 main
+bifrost
+bifrost-gov
 
 # Test binary, built with `go test -c`
 *.test
