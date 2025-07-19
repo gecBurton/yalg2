@@ -63,6 +63,7 @@ import (
 	"context"
 
 	"bifrost-gov/pkg/database"
+	authHandlers "bifrost-gov/pkg/handlers"
 	"bifrost-gov/plugins/auth"
 	"bifrost-gov/plugins/logging"
 
@@ -258,19 +259,6 @@ func main() {
 		sharedDB = db
 		log.Println("Shared database connection established")
 
-		// Initialize auth plugin for API request validation
-		oidcConfig := &auth.OIDCConfig{
-			IssuerURL:   "http://localhost:5556",
-			ClientID:    "bifrost-client",
-			DatabaseURL: databaseURL,
-		}
-		authPlugin, err := auth.NewAuthPluginWithDB(oidcConfig, sharedDB)
-		if err != nil {
-			log.Fatalf("Failed to create auth plugin: %v", err)
-		}
-		loadedPlugins = append(loadedPlugins, authPlugin)
-		log.Println("Auth plugin initialized for API request validation")
-
 		// Initialize secure logging plugin with shared database
 		if store.ClientConfig.EnableLogging {
 			secureLoggingPlugin := logging.NewSecureLoggingPlugin(sharedDB)
@@ -297,7 +285,21 @@ func main() {
 
 	// Initialize handlers
 	providerHandler := handlers.NewProviderHandler(store, client, logger)
-	completionHandler := handlers.NewCompletionHandler(client, logger)
+	
+	// Use authenticated completion handler instead of standard one
+	var completionHandler interface{ RegisterRoutes(*router.Router) }
+	if sharedDB != nil {
+		authCompletionHandler, err := authHandlers.NewAuthCompletionHandler(client, logger, sharedDB)
+		if err != nil {
+			log.Fatalf("Failed to create authenticated completion handler: %v", err)
+		}
+		completionHandler = authCompletionHandler
+		log.Println("Using authenticated completion handler")
+	} else {
+		completionHandler = handlers.NewCompletionHandler(client, logger)
+		log.Println("Using standard completion handler (no database)")
+	}
+	
 	mcpHandler := handlers.NewMCPHandler(client, logger, store)
 	integrationHandler := handlers.NewIntegrationHandler(client)
 	configHandler := handlers.NewConfigHandler(client, logger, store, configPath)

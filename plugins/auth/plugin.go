@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -82,50 +81,9 @@ func (p *AuthPlugin) GetName() string {
 }
 
 // PreHook validates OIDC tokens before request processing
+// Note: This is no longer used as we handle auth at the HTTP handler level
 func (p *AuthPlugin) PreHook(ctx *context.Context, req *schemas.BifrostRequest) (*schemas.BifrostRequest, *schemas.PluginShortCircuit, error) {
-	log.Printf("Auth plugin PreHook called for request: %s", req.Model)
-	
-	// Extract Authorization header
-	authHeader := p.extractAuthHeader(ctx)
-	log.Printf("Authorization header: '%s'", authHeader)
-	
-	// Debug: check what's actually in the context
-	log.Printf("Context values available:")
-	if value := (*ctx).Value("Authorization"); value != nil {
-		log.Printf("  - Authorization: %v", value)
-	}
-	if value := (*ctx).Value("auth-token"); value != nil {
-		log.Printf("  - auth-token: %v", value)
-	}
-	
-	if authHeader != "" {
-		token := strings.TrimPrefix(authHeader, "Bearer ")
-		tokenPreview := token
-		if len(token) > 20 {
-			tokenPreview = token[:20] + "..."
-		}
-		log.Printf("Extracted token preview: %s", tokenPreview)
-
-		if err := p.validateToken(ctx, token); err != nil {
-			log.Printf("Token validation failed: %v", err)
-			// Return short circuit to deny access
-			shortCircuit := &schemas.PluginShortCircuit{
-				Error: &schemas.BifrostError{
-					Error: schemas.ErrorField{
-						Message: "Invalid or expired OIDC token",
-						Code:    &[]string{"UNAUTHORIZED"}[0],
-					},
-					StatusCode:     &[]int{401}[0],
-					IsBifrostError: true,
-				},
-			}
-			return nil, shortCircuit, nil
-		}
-		log.Printf("Token validation successful")
-	} else {
-		log.Printf("No Authorization header found in context")
-	}
-
+	// No-op: Authentication is now handled by AuthCompletionHandler
 	return req, nil, nil
 }
 

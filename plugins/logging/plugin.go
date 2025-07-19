@@ -56,12 +56,17 @@ func (p *SecureLoggingPlugin) PostHook(ctx *context.Context, result *schemas.Bif
 	requestID, _ := (*ctx).Value("request_id").(string)
 	responseTime := int(time.Since(startTime).Milliseconds())
 
-	// Extract user ID from context (set by AuthPlugin)
+	// Extract user ID from context (set by AuthCompletionHandler)
 	var userID *uint
 	if userIDValue := (*ctx).Value("user_id"); userIDValue != nil {
 		if uid, ok := userIDValue.(uint); ok {
 			userID = &uid
+			log.Printf("Logging plugin found user ID in context: %d", uid)
+		} else {
+			log.Printf("Logging plugin found user_id but wrong type: %T = %v", userIDValue, userIDValue)
 		}
+	} else {
+		log.Printf("Logging plugin: no user_id found in context")
 	}
 
 	// Create log entry
@@ -99,6 +104,9 @@ func (p *SecureLoggingPlugin) PostHook(ctx *context.Context, result *schemas.Bif
 	// Store log entry in database
 	if createErr := p.db.Create(logEntry).Error; createErr != nil {
 		log.Printf("Warning: failed to create log entry: %v", createErr)
+	} else {
+		log.Printf("Successfully created log entry: UserID=%v, Model=%s, Provider=%s, Tokens=%d", 
+			logEntry.UserID, logEntry.ModelName, logEntry.ModelProvider, logEntry.TokensUsed)
 	}
 
 	return result, err, nil

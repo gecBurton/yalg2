@@ -1,7 +1,8 @@
 {
   "client": {
     "drop_excess_requests": false,
-    "prometheus_labels": ["model", "provider"]
+    "prometheus_labels": ["model", "provider"],
+    "enable_logging": true
   },
   "providers": {
     "openai": {
