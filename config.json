@@ -1,0 +1,21 @@
+{
+  "client": {
+    "drop_excess_requests": false,
+    "prometheus_labels": ["model", "provider"]
+  },
+  "providers": {
+    "openai": {
+      "keys": [
+        {
+          "value": "env.OPENAI_API_KEY",
+          "models": ["gpt-4o-mini"],
+          "weight": 1.0
+        }
+      ],
+      "concurrency_and_buffer_size": {
+        "concurrency": 3,
+        "buffer_size": 10
+      }
+    }
+  }
+}
