@@ -9,7 +9,7 @@
 *.dylib
 
 # Project binary
-llm-gateway
+main
 
 # Test binary, built with `go test -c`
 *.test
