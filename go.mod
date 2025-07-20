@@ -7,6 +7,7 @@ toolchain go1.24.5
 require (
 	github.com/coreos/go-oidc/v3 v3.14.1
 	github.com/fasthttp/router v1.5.4
+	github.com/google/uuid v1.6.0
 	github.com/maximhq/bifrost/core v1.1.10
 	github.com/maximhq/bifrost/transports v1.1.12
 	github.com/valyala/fasthttp v1.64.0
@@ -43,7 +44,6 @@ require (
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.6 // indirect
 	github.com/googleapis/gax-go/v2 v2.14.1 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
