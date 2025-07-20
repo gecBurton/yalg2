@@ -121,23 +121,24 @@ func (p *AuthPlugin) insertOrUpdateUser(user *User) error {
 		return nil // No database configured
 	}
 
-	// Use GORM's Save method which handles insert or update automatically
-	// It will insert if the record doesn't exist, or update if it does (based on primary key)
-	result := p.db.Where("sub = ?", user.Sub).FirstOrCreate(user)
+	// Check if user already exists
+	var existingUser User
+	result := p.db.Where("sub = ?", user.Sub).First(&existingUser)
+	
 	if result.Error != nil {
+		if result.Error == gorm.ErrRecordNotFound {
+			// User doesn't exist, create new one
+			return p.db.Create(user).Error
+		}
 		return result.Error
 	}
 
-	// If the user already existed, update the fields
-	if result.RowsAffected == 0 {
-		result = p.db.Model(user).Where("sub = ?", user.Sub).Updates(User{
-			Email: user.Email,
-			Name:  user.Name,
-		})
-		return result.Error
-	}
-
-	return nil
+	// User exists, update the fields while keeping the original ID
+	user.ID = existingUser.ID
+	return p.db.Model(&existingUser).Where("id = ?", existingUser.ID).Updates(User{
+		Email: user.Email,
+		Name:  user.Name,
+	}).Error
 }
 
 // InsertOrUpdateUser is a public method to allow external use

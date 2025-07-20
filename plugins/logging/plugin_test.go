@@ -8,58 +8,36 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/maximhq/bifrost/core/schemas"
-	"gorm.io/driver/sqlite"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
-// TestUser represents a test user model for SQLite compatibility
-type TestUser struct {
-	ID                   uuid.UUID `gorm:"primaryKey"`
-	Sub                  string    `gorm:"uniqueIndex;not null"`
-	Email                string
-	Name                 string
-	MaxRequestsPerMinute int `gorm:"default:60"`
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
+// User represents a user for testing (compatible with auth.User)
+type User struct {
+	ID                   uuid.UUID `json:"id" gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	Sub                  string    `json:"sub" gorm:"uniqueIndex;not null"`
+	Email                string    `json:"email"`
+	Name                 string    `json:"name"`
+	MaxRequestsPerMinute int       `json:"max_requests_per_minute" gorm:"default:60"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
 }
 
-// TableName returns the table name for TestUser (same as auth.User)
-func (TestUser) TableName() string {
-	return "users"
-}
-
-// TestLogEntry represents a test log entry model for SQLite compatibility
-type TestLogEntry struct {
-	ID             uuid.UUID  `gorm:"primaryKey"`
-	UserID         *uuid.UUID `gorm:"index"`
-	User           *TestUser  `gorm:"foreignKey:UserID"`
-	RequestID      string     `gorm:"index"`
-	ModelProvider  string
-	ModelName      string
-	TokensUsed     int
-	ResponseTimeMs int
-	StatusCode     int
-	ErrorMessage   string
-	RequestType    string
-	IPAddress      string
-	UserAgent      string
-	CreatedAt      time.Time
-}
-
-// TableName returns the table name for TestLogEntry (same as LogEntry)
-func (TestLogEntry) TableName() string {
-	return "log_entries"
-}
-
-// setupTestDB creates an in-memory SQLite database for testing
+// setupTestDB creates a PostgreSQL test database connection
 func setupTestDB(t *testing.T) *gorm.DB {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	// Use the same PostgreSQL connection as in docker-compose
+	dsn := "host=localhost user=bifrost password=bifrost123 dbname=bifrost port=5432 sslmode=disable"
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
-		t.Fatalf("Failed to connect to test database: %v", err)
+		t.Skipf("Failed to connect to test database (PostgreSQL may not be running): %v", err)
 	}
 
-	// Auto-migrate the tables with SQLite-compatible models
-	err = db.AutoMigrate(&TestUser{}, &TestLogEntry{})
+	// Clean up existing data (ignore errors if tables don't exist)
+	db.Exec("TRUNCATE TABLE log_entries CASCADE")
+	db.Exec("TRUNCATE TABLE users CASCADE")
+
+	// Auto-migrate the real models (User and LogEntry)
+	err = db.AutoMigrate(&User{}, &LogEntry{})
 	if err != nil {
 		t.Fatalf("Failed to migrate test database: %v", err)
 	}
@@ -166,13 +144,22 @@ func TestPostHook_SuccessfulResponse(t *testing.T) {
 	db := setupTestDB(t)
 	plugin := NewSecureLoggingPlugin(db)
 
+	// Create a test user first
+	userID := uuid.New()
+	user := &User{
+		ID:   userID,
+		Sub:  "successful-test-user",
+		Name: "Successful Test User",
+	}
+	if err := db.Create(user).Error; err != nil {
+		t.Fatalf("Failed to create test user: %v", err)
+	}
+
 	// Set up context with required values
 	ctx := context.Background()
 	startTime := time.Now().Add(-100 * time.Millisecond)
 	ctx = context.WithValue(ctx, "request_start_time", startTime)
 	ctx = context.WithValue(ctx, "request_id", "test-request-123")
-
-	userID := uuid.New()
 	ctx = context.WithValue(ctx, "user_id", userID)
 
 	bifrostReq := &schemas.BifrostRequest{
@@ -201,7 +188,7 @@ func TestPostHook_SuccessfulResponse(t *testing.T) {
 	}
 
 	// Verify log entry was created
-	var logEntry TestLogEntry
+	var logEntry LogEntry
 	dbErr := db.Where("request_id = ?", "test-request-123").First(&logEntry).Error
 	if dbErr != nil {
 		t.Fatalf("Expected log entry to be created: %v", dbErr)
@@ -238,13 +225,22 @@ func TestPostHook_ErrorResponse(t *testing.T) {
 	db := setupTestDB(t)
 	plugin := NewSecureLoggingPlugin(db)
 
+	// Create a test user first
+	userID := uuid.New()
+	user := &User{
+		ID:   userID,
+		Sub:  "error-test-user",
+		Name: "Error Test User",
+	}
+	if err := db.Create(user).Error; err != nil {
+		t.Fatalf("Failed to create test user: %v", err)
+	}
+
 	// Set up context with required values
 	ctx := context.Background()
 	startTime := time.Now().Add(-50 * time.Millisecond)
 	ctx = context.WithValue(ctx, "request_start_time", startTime)
 	ctx = context.WithValue(ctx, "request_id", "test-error-456")
-
-	userID := uuid.New()
 	ctx = context.WithValue(ctx, "user_id", userID)
 
 	statusCode := 429
@@ -269,7 +265,7 @@ func TestPostHook_ErrorResponse(t *testing.T) {
 	}
 
 	// Verify log entry was created
-	var logEntry TestLogEntry
+	var logEntry LogEntry
 	dbErr := db.Where("request_id = ?", "test-error-456").First(&logEntry).Error
 	if dbErr != nil {
 		t.Fatalf("Expected log entry to be created: %v", dbErr)
@@ -305,7 +301,7 @@ func TestPostHook_ErrorWithoutStatusCode(t *testing.T) {
 	plugin.PostHook(&ctx, nil, bifrostErr)
 
 	// Verify log entry was created with default 500 status
-	var logEntry TestLogEntry
+	var logEntry LogEntry
 	dbErr := db.Where("request_id = ?", "test-error-500").First(&logEntry).Error
 	if dbErr != nil {
 		t.Fatalf("Expected log entry to be created: %v", dbErr)
@@ -330,7 +326,7 @@ func TestPostHook_NoUserContext(t *testing.T) {
 	plugin.PostHook(&ctx, response, nil)
 
 	// Verify log entry was created without user ID
-	var logEntry TestLogEntry
+	var logEntry LogEntry
 	dbErr := db.Where("request_id = ?", "test-no-user").First(&logEntry).Error
 	if dbErr != nil {
 		t.Fatalf("Expected log entry to be created: %v", dbErr)
@@ -356,7 +352,7 @@ func TestPostHook_InvalidUserIDType(t *testing.T) {
 	plugin.PostHook(&ctx, response, nil)
 
 	// Verify log entry was created without user ID
-	var logEntry TestLogEntry
+	var logEntry LogEntry
 	dbErr := db.Where("request_id = ?", "test-invalid-user").First(&logEntry).Error
 	if dbErr != nil {
 		t.Fatalf("Expected log entry to be created: %v", dbErr)
@@ -373,7 +369,7 @@ func TestGetRecentCallsForUser(t *testing.T) {
 
 	// Create a test user
 	userID := uuid.New()
-	user := &TestUser{
+	user := &User{
 		ID:    userID,
 		Sub:   "test-user",
 		Email: "test@example.com",
@@ -385,7 +381,7 @@ func TestGetRecentCallsForUser(t *testing.T) {
 
 	// Create some log entries for this user
 	for i := 0; i < 5; i++ {
-		logEntry := &TestLogEntry{
+		logEntry := &LogEntry{
 			ID:            uuid.New(),
 			UserID:        &userID,
 			RequestID:     fmt.Sprintf("request-%d", i),
@@ -402,7 +398,7 @@ func TestGetRecentCallsForUser(t *testing.T) {
 
 	// Create log entries for another user (should not be returned)
 	otherUserID := uuid.New()
-	otherUser := &TestUser{
+	otherUser := &User{
 		ID:    otherUserID,
 		Sub:   "other-user",
 		Email: "other@example.com",
@@ -413,7 +409,7 @@ func TestGetRecentCallsForUser(t *testing.T) {
 	}
 
 	for i := 0; i < 3; i++ {
-		logEntry := &TestLogEntry{
+		logEntry := &LogEntry{
 			ID:            uuid.New(),
 			UserID:        &otherUserID,
 			RequestID:     fmt.Sprintf("other-request-%d", i),
@@ -519,7 +515,7 @@ func TestCompleteWorkflow(t *testing.T) {
 
 	// Create a test user
 	userID := uuid.New()
-	user := &TestUser{
+	user := &User{
 		ID:    userID,
 		Sub:   "workflow-user",
 		Email: "workflow@example.com",
@@ -559,7 +555,7 @@ func TestCompleteWorkflow(t *testing.T) {
 
 	// Step 3: Verify log entry was created correctly
 	requestID := ctx.Value("request_id").(string)
-	var logEntry TestLogEntry
+	var logEntry LogEntry
 	dbErr := db.Where("request_id = ?", requestID).First(&logEntry).Error
 	if dbErr != nil {
 		t.Fatalf("Expected log entry to be created: %v", dbErr)

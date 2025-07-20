@@ -110,19 +110,6 @@ The Dex configuration includes test users:
 
 ## Configuration
 
-### OIDC AuthPlugin Example
-
-```go
-config := &OIDCConfig{
-    IssuerURL:   "http://localhost:5556",
-    ClientID:    "bifrost-client",
-    ClientSecret: "bifrost-secret",
-    DatabaseURL: "postgres://bifrost:bifrost123@localhost:5432/bifrost?sslmode=disable",
-}
-
-authPlugin, err := NewAuthPlugin(config)
-```
-
 ### Environment Variables
 
 - `PORT`: Server port (default: 8080)
@@ -132,22 +119,6 @@ authPlugin, err := NewAuthPlugin(config)
 - `OIDC_CLIENT_SECRET`: OIDC client secret
 - `DATABASE_URL`: PostgreSQL connection string
 
-## Database Schema
-
-The application automatically creates a `users` table with the following schema:
-
-```sql
-CREATE TABLE users (
-    id SERIAL PRIMARY KEY,
-    sub VARCHAR(255) UNIQUE NOT NULL,  -- OIDC subject identifier
-    email VARCHAR(255),                -- User email
-    name VARCHAR(255),                 -- User display name
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-```
-
-## Development
 
 ### Prerequisites
 
