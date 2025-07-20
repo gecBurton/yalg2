@@ -1,13 +1,47 @@
 # Bifrost Gov
 
-A Bifrost HTTP service with OIDC authentication and PostgreSQL user storage.
+A government-focused AI proxy built on [Bifrost](https://github.com/maximhq/bifrost) with OIDC authentication and comprehensive logging.
+
+## Architecture
+
+### Authentication Architecture
+
+This application implements a dual authentication system to handle both web-based and API-based access:
+
+#### 1. Web Authentication (`plugins/auth/`)
+- **Purpose**: Browser-based OIDC login flows for the web interface
+- **Routes**: `/auth/login`, `/auth/callback`, `/auth/logout`, `/auth/status`
+- **Flow**: Redirects users to Dex OIDC provider, handles callbacks, manages sessions
+- **Storage**: Uses cookies and database sessions for web users
+- **Implementation**: `plugins/auth/handler.go`
+
+#### 2. API Authentication (`pkg/handlers/auth_completion.go`)
+- **Purpose**: JWT token validation for programmatic API access
+- **Routes**: `/v1/chat/completions`, `/v1/text/completions` (with auth wrapper)
+- **Flow**: Validates Bearer tokens in Authorization headers, injects user context
+- **Storage**: Stateless JWT validation, user context passed to logging
+- **Implementation**: `pkg/handlers/auth_completion.go`
+
+#### 3. Shared OIDC Services (`plugins/auth/plugin.go`)
+- **Purpose**: Common OIDC token verification and user management
+- **Provides**: JWT verifier, database operations, user storage
+- **Shared by**: Both web handlers and API handlers use these services
+
+#### Why This Architecture?
+
+**Different Access Patterns**: Web browsers need redirect-based OIDC flows with cookies, while API clients need stateless JWT token validation.
+
+**Header Access Limitation**: Bifrost plugins cannot access HTTP headers (like `Authorization: Bearer <token>`), so API authentication must happen at the HTTP handler level before requests reach Bifrost.
+
+**Clean Separation**: Web auth handles human users, API auth handles programmatic access, shared services provide common functionality.
 
 ## Features
 
-- OIDC authentication using Dex
-- PostgreSQL database for user storage
+- Dual authentication: OIDC web flows + JWT API validation
+- PostgreSQL database for user and session storage
 - GORM for database operations
-- Plugin-based architecture
+- Comprehensive request logging with user context
+- Fail-fast database requirement
 
 ## Quick Start
 
@@ -133,24 +167,26 @@ go build -o bifrost main.go
 go test ./...
 ```
 
-## Plugins
+## Components
 
-The application includes two built-in plugins:
+### Authentication (`plugins/auth/` + `pkg/handlers/`)
 
-1. **AuthPlugin (OIDC Authentication)**:
-   - Validates OIDC ID tokens from Dex
-   - Automatically stores/updates users in PostgreSQL
-   - Links authenticated users to request context
-   - Security-focused token validation
+- **`plugins/auth/plugin.go`** - OIDC services and shared user management
+- **`plugins/auth/handler.go`** - Web authentication routes (login/logout/callback/status)
+- **`plugins/auth/models.go`** - User and Session data models
+- **`pkg/handlers/auth_completion.go`** - API JWT authentication wrapper for completion endpoints
 
-2. **SecureLoggingPlugin (Request Logging)**:
-   - PostgreSQL-based request logging with user context
-   - Tracks model usage, response times, token consumption
-   - Links logs to authenticated users via foreign key
-   - Security-conscious (no raw queries or sensitive data stored)
-   - Automatically enabled when `EnableLogging=true` and `DATABASE_URL` is set
+### Logging (`plugins/logging/`)
 
-Both plugins are automatically loaded when the application starts.
+- **`plugins/logging/plugin.go`** - SecureLoggingPlugin for request/response logging with user context
+- **`plugins/logging/models.go`** - LogEntry data model
+- **`plugins/logging/handler.go`** - Metrics and logging web interface
+
+### Infrastructure (`pkg/database/`)
+
+- **`pkg/database/connection.go`** - PostgreSQL connection utilities
+
+The application requires a PostgreSQL database connection and will fail to start without `DATABASE_URL`.
 
 ## Docker Compose Services
 

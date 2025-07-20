@@ -73,7 +73,6 @@ import (
 	"github.com/maximhq/bifrost/transports/bifrost-http/handlers"
 	"github.com/maximhq/bifrost/transports/bifrost-http/lib"
 	"github.com/valyala/fasthttp"
-	"gorm.io/gorm"
 )
 
 // Command line flags
@@ -248,25 +247,23 @@ func main() {
 
 	loadedPlugins := []schemas.Plugin{}
 
-	// Initialize shared database connection if available
+	// Initialize shared database connection (required)
 	databaseURL := os.Getenv("DATABASE_URL")
-	var sharedDB *gorm.DB
-	if databaseURL != "" {
-		db, err := database.NewPostgresConnection(databaseURL)
-		if err != nil {
-			log.Fatalf("Failed to create database connection: %v", err)
-		}
-		sharedDB = db
-		log.Println("Shared database connection established")
+	if databaseURL == "" {
+		log.Fatalf("DATABASE_URL environment variable is required")
+	}
+	
+	sharedDB, err := database.NewPostgresConnection(databaseURL)
+	if err != nil {
+		log.Fatalf("Failed to create database connection: %v", err)
+	}
+	log.Println("Shared database connection established")
 
-		// Initialize secure logging plugin with shared database
-		if store.ClientConfig.EnableLogging {
-			secureLoggingPlugin := logging.NewSecureLoggingPlugin(sharedDB)
-			loadedPlugins = append(loadedPlugins, secureLoggingPlugin)
-			log.Println("Secure logging plugin initialized with PostgreSQL")
-		}
-	} else {
-		log.Println("DATABASE_URL not set, skipping database-dependent plugins")
+	// Initialize secure logging plugin with shared database
+	if store.ClientConfig.EnableLogging {
+		secureLoggingPlugin := logging.NewSecureLoggingPlugin(sharedDB)
+		loadedPlugins = append(loadedPlugins, secureLoggingPlugin)
+		log.Println("Secure logging plugin initialized with PostgreSQL")
 	}
 
 	client, err := bifrost.Init(schemas.BifrostConfig{
@@ -286,39 +283,24 @@ func main() {
 	// Initialize handlers
 	providerHandler := handlers.NewProviderHandler(store, client, logger)
 	
-	// Use authenticated completion handler instead of standard one
-	var completionHandler interface{ RegisterRoutes(*router.Router) }
-	if sharedDB != nil {
-		authCompletionHandler, err := authHandlers.NewAuthCompletionHandler(client, logger, sharedDB)
-		if err != nil {
-			log.Fatalf("Failed to create authenticated completion handler: %v", err)
-		}
-		completionHandler = authCompletionHandler
-		log.Println("Using authenticated completion handler")
-	} else {
-		completionHandler = handlers.NewCompletionHandler(client, logger)
-		log.Println("Using standard completion handler (no database)")
+	// Use authenticated completion handler
+	authCompletionHandler, err := authHandlers.NewAuthCompletionHandler(client, logger, sharedDB)
+	if err != nil {
+		log.Fatalf("Failed to create authenticated completion handler: %v", err)
 	}
+	log.Println("Using authenticated completion handler")
 	
 	mcpHandler := handlers.NewMCPHandler(client, logger, store)
 	integrationHandler := handlers.NewIntegrationHandler(client)
 	configHandler := handlers.NewConfigHandler(client, logger, store, configPath)
 	
-	// Create auth handler with shared database if available
-	var authHandler *auth.AuthHandler
-	if sharedDB != nil {
-		authHandler = auth.NewAuthHandlerWithDB(store, sharedDB)
-		log.Println("Auth handler configured with shared database access")
-	} else {
-		authHandler = auth.NewAuthHandler(store)
-	}
+	// Create auth handler with shared database
+	authHandler := auth.NewAuthHandlerWithDB(store, sharedDB)
+	log.Println("Auth handler configured with shared database access")
 	
-	// Create logging handler if database is available
-	var loggingHandler *logging.LoggingHandler
-	if sharedDB != nil {
-		loggingHandler = logging.NewLoggingHandler(sharedDB)
-		log.Println("Logging handler configured with shared database access")
-	}
+	// Create logging handler with shared database
+	loggingHandler := logging.NewLoggingHandler(sharedDB)
+	log.Println("Logging handler configured with shared database access")
 
 	// Note: WebSocket logging handlers removed in favor of secure PostgreSQL logging
 
@@ -326,7 +308,7 @@ func main() {
 
 	// Register all handler routes FIRST (API routes take precedence)
 	providerHandler.RegisterRoutes(r)
-	completionHandler.RegisterRoutes(r)
+	authCompletionHandler.RegisterRoutes(r)
 	mcpHandler.RegisterRoutes(r)
 	integrationHandler.RegisterRoutes(r)
 	configHandler.RegisterRoutes(r)
@@ -334,10 +316,8 @@ func main() {
 	// Register authentication routes
 	authHandler.RegisterRoutes(r)
 	
-	// Register logging routes if available
-	if loggingHandler != nil {
-		loggingHandler.RegisterRoutes(r)
-	}
+	// Register logging routes
+	loggingHandler.RegisterRoutes(r)
 
 	// Add UI routes - serve the local index.html (these should be LAST)
 	r.GET("/", uiHandler)
