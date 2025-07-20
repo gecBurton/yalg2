@@ -62,8 +62,8 @@ import (
 
 	"context"
 
-	"bifrost-gov/pkg/database"
-	authHandlers "bifrost-gov/pkg/handlers"
+	"bifrost-gov/internal/database"
+	authHandlers "bifrost-gov/internal/handlers"
 	"bifrost-gov/plugins/auth"
 	"bifrost-gov/plugins/logging"
 	"bifrost-gov/plugins/ratelimit"

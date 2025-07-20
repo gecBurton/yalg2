@@ -5,33 +5,11 @@ import (
 	"testing"
 	"time"
 
+	"bifrost-gov/internal/testutil"
 	"github.com/google/uuid"
 	"github.com/maximhq/bifrost/core/schemas"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
-
-// setupTestDB creates a PostgreSQL test database connection
-func setupTestDB(t *testing.T) *gorm.DB {
-	// Use the same PostgreSQL connection as in docker-compose
-	dsn := "host=localhost user=bifrost password=bifrost123 dbname=bifrost port=5432 sslmode=disable"
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
-	if err != nil {
-		t.Skipf("Failed to connect to test database (PostgreSQL may not be running): %v", err)
-	}
-
-	// Clean up existing data
-	db.Exec("TRUNCATE TABLE sessions CASCADE")
-	db.Exec("TRUNCATE TABLE users CASCADE")
-
-	// Auto-migrate the real models (User and Session)
-	err = db.AutoMigrate(&User{}, &Session{})
-	if err != nil {
-		t.Fatalf("Failed to migrate test database: %v", err)
-	}
-
-	return db
-}
 
 // createMockAuthPlugin creates a plugin with mocked OIDC components for testing
 func createMockAuthPlugin(t *testing.T, db *gorm.DB) *AuthPlugin {
@@ -70,7 +48,7 @@ func TestNewAuthPlugin_NilConfig(t *testing.T) {
 }
 
 func TestNewAuthPluginWithDB_NilConfig(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &User{}, &Session{})
 	plugin, err := NewAuthPluginWithDB(nil, db)
 
 	if plugin != nil {
@@ -87,7 +65,7 @@ func TestNewAuthPluginWithDB_NilConfig(t *testing.T) {
 }
 
 func TestAuthPlugin_GetName(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &User{}, &Session{})
 	plugin := createMockAuthPlugin(t, db)
 
 	name := plugin.GetName()
@@ -98,7 +76,7 @@ func TestAuthPlugin_GetName(t *testing.T) {
 }
 
 func TestAuthPlugin_GetDB(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &User{}, &Session{})
 	plugin := createMockAuthPlugin(t, db)
 
 	resultDB := plugin.GetDB()
@@ -117,7 +95,7 @@ func TestAuthPlugin_GetDB_NilDB(t *testing.T) {
 }
 
 func TestAuthPlugin_GetVerifier(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &User{}, &Session{})
 	plugin := createMockAuthPlugin(t, db)
 
 	verifier := plugin.GetVerifier()
@@ -128,7 +106,7 @@ func TestAuthPlugin_GetVerifier(t *testing.T) {
 }
 
 func TestAuthPlugin_PreHook(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &User{}, &Session{})
 	plugin := createMockAuthPlugin(t, db)
 
 	ctx := context.Background()
@@ -151,7 +129,7 @@ func TestAuthPlugin_PreHook(t *testing.T) {
 }
 
 func TestAuthPlugin_PostHook(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &User{}, &Session{})
 	plugin := createMockAuthPlugin(t, db)
 
 	ctx := context.Background()
@@ -173,7 +151,7 @@ func TestAuthPlugin_PostHook(t *testing.T) {
 }
 
 func TestAuthPlugin_InsertOrUpdateUser_NewUser(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &User{}, &Session{})
 	plugin := createMockAuthPlugin(t, db)
 
 	user := &User{
@@ -209,7 +187,7 @@ func TestAuthPlugin_InsertOrUpdateUser_NewUser(t *testing.T) {
 }
 
 func TestAuthPlugin_InsertOrUpdateUser_UpdateExisting(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &User{}, &Session{})
 	plugin := createMockAuthPlugin(t, db)
 
 	// Create initial user
@@ -272,7 +250,7 @@ func TestAuthPlugin_InsertOrUpdateUser_NoDatabase(t *testing.T) {
 }
 
 func TestAuthPlugin_CreateSession(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &User{}, &Session{})
 	plugin := createMockAuthPlugin(t, db)
 
 	// Create a user first
@@ -335,7 +313,7 @@ func TestAuthPlugin_CreateSession_NoDatabase(t *testing.T) {
 }
 
 func TestAuthPlugin_GetSession(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &User{}, &Session{})
 	plugin := createMockAuthPlugin(t, db)
 
 	// Create a user first
@@ -391,7 +369,7 @@ func TestAuthPlugin_GetSession(t *testing.T) {
 }
 
 func TestAuthPlugin_GetSession_ExpiredSession(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &User{}, &Session{})
 	plugin := createMockAuthPlugin(t, db)
 
 	// Create a user first
@@ -427,7 +405,7 @@ func TestAuthPlugin_GetSession_ExpiredSession(t *testing.T) {
 }
 
 func TestAuthPlugin_GetSession_NotFound(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &User{}, &Session{})
 	plugin := createMockAuthPlugin(t, db)
 
 	// Test getting non-existent session
@@ -458,7 +436,7 @@ func TestAuthPlugin_GetSession_NoDatabase(t *testing.T) {
 }
 
 func TestAuthPlugin_DeleteSession(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &User{}, &Session{})
 	plugin := createMockAuthPlugin(t, db)
 
 	// Create a user first
@@ -512,7 +490,7 @@ func TestAuthPlugin_DeleteSession_NoDatabase(t *testing.T) {
 }
 
 func TestAuthPlugin_CleanupExpiredSessions(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &User{}, &Session{})
 	plugin := createMockAuthPlugin(t, db)
 
 	// Create a user first
@@ -584,7 +562,7 @@ func TestAuthPlugin_CleanupExpiredSessions_NoDatabase(t *testing.T) {
 }
 
 func TestAuthPlugin_Cleanup_WithDatabase(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &User{}, &Session{})
 	plugin := createMockAuthPlugin(t, db)
 
 	err := plugin.Cleanup()
@@ -603,7 +581,7 @@ func TestAuthPlugin_Cleanup_NoDatabase(t *testing.T) {
 }
 
 func TestAuthPlugin_ExtractAuthHeader(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &User{}, &Session{})
 	plugin := createMockAuthPlugin(t, db)
 
 	// Test with Authorization header
@@ -637,7 +615,7 @@ func TestAuthPlugin_ExtractAuthHeader(t *testing.T) {
 
 // TestCompleteUserWorkflow tests the complete user management workflow
 func TestCompleteUserWorkflow(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &User{}, &Session{})
 	plugin := createMockAuthPlugin(t, db)
 
 	// Step 1: Create a new user

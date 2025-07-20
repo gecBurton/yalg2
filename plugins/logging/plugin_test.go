@@ -6,47 +6,14 @@ import (
 	"testing"
 	"time"
 
+	"bifrost-gov/internal/testutil"
+	"bifrost-gov/plugins/auth"
 	"github.com/google/uuid"
 	"github.com/maximhq/bifrost/core/schemas"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
 )
 
-// User represents a user for testing (compatible with auth.User)
-type User struct {
-	ID                   uuid.UUID `json:"id" gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	Sub                  string    `json:"sub" gorm:"uniqueIndex;not null"`
-	Email                string    `json:"email"`
-	Name                 string    `json:"name"`
-	MaxRequestsPerMinute int       `json:"max_requests_per_minute" gorm:"default:60"`
-	CreatedAt            time.Time `json:"created_at"`
-	UpdatedAt            time.Time `json:"updated_at"`
-}
-
-// setupTestDB creates a PostgreSQL test database connection
-func setupTestDB(t *testing.T) *gorm.DB {
-	// Use the same PostgreSQL connection as in docker-compose
-	dsn := "host=localhost user=bifrost password=bifrost123 dbname=bifrost port=5432 sslmode=disable"
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
-	if err != nil {
-		t.Skipf("Failed to connect to test database (PostgreSQL may not be running): %v", err)
-	}
-
-	// Clean up existing data (ignore errors if tables don't exist)
-	db.Exec("TRUNCATE TABLE log_entries CASCADE")
-	db.Exec("TRUNCATE TABLE users CASCADE")
-
-	// Auto-migrate the real models (User and LogEntry)
-	err = db.AutoMigrate(&User{}, &LogEntry{})
-	if err != nil {
-		t.Fatalf("Failed to migrate test database: %v", err)
-	}
-
-	return db
-}
-
 func TestNewSecureLoggingPlugin(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &auth.User{}, &LogEntry{})
 	plugin := NewSecureLoggingPlugin(db)
 
 	if plugin == nil {
@@ -75,7 +42,7 @@ func TestNewSecureLoggingPlugin_NilDB(t *testing.T) {
 }
 
 func TestPreHook(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &auth.User{}, &LogEntry{})
 	plugin := NewSecureLoggingPlugin(db)
 
 	ctx := context.Background()
@@ -141,12 +108,12 @@ func TestPostHook_NoDatabase(t *testing.T) {
 }
 
 func TestPostHook_SuccessfulResponse(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &auth.User{}, &LogEntry{})
 	plugin := NewSecureLoggingPlugin(db)
 
 	// Create a test user first
 	userID := uuid.New()
-	user := &User{
+	user := &auth.User{
 		ID:   userID,
 		Sub:  "successful-test-user",
 		Name: "Successful Test User",
@@ -222,12 +189,12 @@ func TestPostHook_SuccessfulResponse(t *testing.T) {
 }
 
 func TestPostHook_ErrorResponse(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &auth.User{}, &LogEntry{})
 	plugin := NewSecureLoggingPlugin(db)
 
 	// Create a test user first
 	userID := uuid.New()
-	user := &User{
+	user := &auth.User{
 		ID:   userID,
 		Sub:  "error-test-user",
 		Name: "Error Test User",
@@ -284,7 +251,7 @@ func TestPostHook_ErrorResponse(t *testing.T) {
 }
 
 func TestPostHook_ErrorWithoutStatusCode(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &auth.User{}, &LogEntry{})
 	plugin := NewSecureLoggingPlugin(db)
 
 	// Set up context with required values
@@ -313,7 +280,7 @@ func TestPostHook_ErrorWithoutStatusCode(t *testing.T) {
 }
 
 func TestPostHook_NoUserContext(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &auth.User{}, &LogEntry{})
 	plugin := NewSecureLoggingPlugin(db)
 
 	// Set up context without user_id
@@ -338,7 +305,7 @@ func TestPostHook_NoUserContext(t *testing.T) {
 }
 
 func TestPostHook_InvalidUserIDType(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &auth.User{}, &LogEntry{})
 	plugin := NewSecureLoggingPlugin(db)
 
 	// Set up context with invalid user_id type
@@ -364,12 +331,12 @@ func TestPostHook_InvalidUserIDType(t *testing.T) {
 }
 
 func TestGetRecentCallsForUser(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &auth.User{}, &LogEntry{})
 	plugin := NewSecureLoggingPlugin(db)
 
 	// Create a test user
 	userID := uuid.New()
-	user := &User{
+	user := &auth.User{
 		ID:    userID,
 		Sub:   "test-user",
 		Email: "test@example.com",
@@ -398,7 +365,7 @@ func TestGetRecentCallsForUser(t *testing.T) {
 
 	// Create log entries for another user (should not be returned)
 	otherUserID := uuid.New()
-	otherUser := &User{
+	otherUser := &auth.User{
 		ID:    otherUserID,
 		Sub:   "other-user",
 		Email: "other@example.com",
@@ -475,7 +442,7 @@ func TestGetRecentCallsForUser_NoDatabase(t *testing.T) {
 }
 
 func TestGetRecentCallsForUser_NoEntries(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &auth.User{}, &LogEntry{})
 	plugin := NewSecureLoggingPlugin(db)
 
 	userID := uuid.New()
@@ -490,7 +457,7 @@ func TestGetRecentCallsForUser_NoEntries(t *testing.T) {
 }
 
 func TestCleanup(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &auth.User{}, &LogEntry{})
 	plugin := NewSecureLoggingPlugin(db)
 
 	err := plugin.Cleanup()
@@ -510,12 +477,12 @@ func TestCleanup_NoDatabase(t *testing.T) {
 
 // TestPostHook_CompleteWorkflow tests the complete workflow from PreHook to PostHook
 func TestCompleteWorkflow(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &auth.User{}, &LogEntry{})
 	plugin := NewSecureLoggingPlugin(db)
 
 	// Create a test user
 	userID := uuid.New()
-	user := &User{
+	user := &auth.User{
 		ID:    userID,
 		Sub:   "workflow-user",
 		Email: "workflow@example.com",

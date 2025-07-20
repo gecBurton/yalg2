@@ -6,38 +6,15 @@ import (
 	"testing"
 	"time"
 
+	"bifrost-gov/internal/testutil"
 	"bifrost-gov/plugins/auth"
 	"bifrost-gov/plugins/logging"
 	"github.com/google/uuid"
 	"github.com/maximhq/bifrost/core/schemas"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
 )
 
-// setupTestDB creates a PostgreSQL test database connection
-func setupTestDB(t *testing.T) *gorm.DB {
-	// Use the same PostgreSQL connection as in docker-compose
-	dsn := "host=localhost user=bifrost password=bifrost123 dbname=bifrost port=5432 sslmode=disable"
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
-	if err != nil {
-		t.Skipf("Failed to connect to test database (PostgreSQL may not be running): %v", err)
-	}
-
-	// Clean up existing data (ignore errors if tables don't exist)
-	db.Exec("TRUNCATE TABLE log_entries CASCADE")
-	db.Exec("TRUNCATE TABLE users CASCADE")
-
-	// Auto-migrate the real models (User and LogEntry)
-	err = db.AutoMigrate(&auth.User{}, &logging.LogEntry{})
-	if err != nil {
-		t.Fatalf("Failed to migrate test database: %v", err)
-	}
-
-	return db
-}
-
 func TestNewRateLimitPlugin(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &auth.User{}, &logging.LogEntry{})
 	plugin := NewRateLimitPlugin(db)
 
 	if plugin == nil {
@@ -68,7 +45,7 @@ func TestPreHook_NoDatabase(t *testing.T) {
 }
 
 func TestPreHook_NoUserContext(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &auth.User{}, &logging.LogEntry{})
 	plugin := NewRateLimitPlugin(db)
 	ctx := context.Background()
 	req := &schemas.BifrostRequest{}
@@ -87,7 +64,7 @@ func TestPreHook_NoUserContext(t *testing.T) {
 }
 
 func TestPreHook_UserNotFound(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &auth.User{}, &logging.LogEntry{})
 	plugin := NewRateLimitPlugin(db)
 	nonExistentUserID := uuid.New()
 	ctx := context.WithValue(context.Background(), "user_id", nonExistentUserID)
@@ -107,7 +84,7 @@ func TestPreHook_UserNotFound(t *testing.T) {
 }
 
 func TestPreHook_WithinRateLimit(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &auth.User{}, &logging.LogEntry{})
 	plugin := NewRateLimitPlugin(db)
 
 	// Create a test user with rate limit of 10 requests per minute
@@ -156,7 +133,7 @@ func TestPreHook_WithinRateLimit(t *testing.T) {
 }
 
 func TestPreHook_ExceedsRateLimit(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &auth.User{}, &logging.LogEntry{})
 	plugin := NewRateLimitPlugin(db)
 
 	// Create a test user with rate limit of 5 requests per minute
@@ -210,7 +187,7 @@ func TestPreHook_ExceedsRateLimit(t *testing.T) {
 }
 
 func TestPreHook_OldRequestsIgnored(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &auth.User{}, &logging.LogEntry{})
 	plugin := NewRateLimitPlugin(db)
 
 	// Create a test user with rate limit of 5 requests per minute
@@ -275,7 +252,7 @@ func TestPreHook_OldRequestsIgnored(t *testing.T) {
 }
 
 func TestGetUserRateLimit(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &auth.User{}, &logging.LogEntry{})
 	plugin := NewRateLimitPlugin(db)
 
 	// Create a test user
@@ -301,7 +278,7 @@ func TestGetUserRateLimit(t *testing.T) {
 }
 
 func TestGetUserRequestCount(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &auth.User{}, &logging.LogEntry{})
 	plugin := NewRateLimitPlugin(db)
 
 	// Create a test user first
@@ -359,7 +336,7 @@ func TestGetUserRequestCount(t *testing.T) {
 }
 
 func TestUpdateUserRateLimit(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &auth.User{}, &logging.LogEntry{})
 	plugin := NewRateLimitPlugin(db)
 
 	// Create a test user
@@ -392,7 +369,7 @@ func TestUpdateUserRateLimit(t *testing.T) {
 }
 
 func TestPostHook(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &auth.User{}, &logging.LogEntry{})
 	plugin := NewRateLimitPlugin(db)
 
 	ctx := context.Background()
@@ -413,7 +390,7 @@ func TestPostHook(t *testing.T) {
 }
 
 func TestCleanup(t *testing.T) {
-	db := setupTestDB(t)
+	db := testutil.SetupTestDB(t, &auth.User{}, &logging.LogEntry{})
 	plugin := NewRateLimitPlugin(db)
 
 	err := plugin.Cleanup()
