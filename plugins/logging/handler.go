@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/fasthttp/router"
+	"github.com/google/uuid"
 	"github.com/valyala/fasthttp"
 	"gorm.io/gorm"
 )
@@ -49,7 +50,7 @@ func (h *LoggingHandler) metricsHandler(ctx *fasthttp.RequestCtx) {
 	// Define a Session struct that matches the auth plugin's Session table
 	type Session struct {
 		ID        string    `gorm:"primaryKey"`
-		UserID    uint      `gorm:"index"`
+		UserID    uuid.UUID `gorm:"type:uuid;index"`
 		ExpiresAt time.Time `gorm:"index"`
 	}
 

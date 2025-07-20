@@ -11,6 +11,7 @@ require (
 	github.com/maximhq/bifrost/transports v1.1.12
 	github.com/valyala/fasthttp v1.64.0
 	gorm.io/driver/postgres v1.6.0
+	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gorm v1.30.0
 )
 

@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/maximhq/bifrost/core/schemas"
 	"gorm.io/gorm"
 )
@@ -57,11 +58,11 @@ func (p *SecureLoggingPlugin) PostHook(ctx *context.Context, result *schemas.Bif
 	responseTime := int(time.Since(startTime).Milliseconds())
 
 	// Extract user ID from context (set by AuthCompletionHandler)
-	var userID *uint
+	var userID *uuid.UUID
 	if userIDValue := (*ctx).Value("user_id"); userIDValue != nil {
-		if uid, ok := userIDValue.(uint); ok {
+		if uid, ok := userIDValue.(uuid.UUID); ok {
 			userID = &uid
-			log.Printf("Logging plugin found user ID in context: %d", uid)
+			log.Printf("Logging plugin found user ID in context: %s", uid)
 		} else {
 			log.Printf("Logging plugin found user_id but wrong type: %T = %v", userIDValue, userIDValue)
 		}
@@ -113,7 +114,7 @@ func (p *SecureLoggingPlugin) PostHook(ctx *context.Context, result *schemas.Bif
 }
 
 // GetRecentCallsForUser retrieves the most recent calls for a specific user
-func (p *SecureLoggingPlugin) GetRecentCallsForUser(userID uint, limit int) ([]LogEntry, error) {
+func (p *SecureLoggingPlugin) GetRecentCallsForUser(userID uuid.UUID, limit int) ([]LogEntry, error) {
 	if p.db == nil {
 		return nil, fmt.Errorf("database not available")
 	}

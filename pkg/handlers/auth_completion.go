@@ -8,6 +8,7 @@ import (
 
 	"bifrost-gov/plugins/auth"
 	"github.com/fasthttp/router"
+	"github.com/google/uuid"
 	bifrost "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/bifrost-http/handlers"
@@ -60,43 +61,43 @@ type CompletionRequest struct {
 }
 
 // validateJWTAndGetUserID validates JWT token and returns user ID
-func (h *AuthCompletionHandler) validateJWTAndGetUserID(ctx *fasthttp.RequestCtx) (uint, error) {
+func (h *AuthCompletionHandler) validateJWTAndGetUserID(ctx *fasthttp.RequestCtx) (uuid.UUID, error) {
 	// Extract Authorization header
 	authHeader := string(ctx.Request.Header.Peek("Authorization"))
 	if authHeader == "" {
-		return 0, nil // No auth header
+		return uuid.Nil, nil // No auth header
 	}
 	
 	// Extract token
 	token := strings.TrimPrefix(authHeader, "Bearer ")
 	if token == authHeader {
-		return 0, nil // No Bearer prefix
+		return uuid.Nil, nil // No Bearer prefix
 	}
 	
 	// Verify the token
 	tempCtx := context.Background()
 	idToken, err := h.authPlugin.GetVerifier().Verify(tempCtx, token)
 	if err != nil {
-		return 0, err
+		return uuid.Nil, err
 	}
 	
 	// Extract claims
 	var claims map[string]any
 	if err := idToken.Claims(&claims); err != nil {
-		return 0, err
+		return uuid.Nil, err
 	}
 	
 	// Get user subject
 	sub, ok := claims["sub"].(string)
 	if !ok {
-		return 0, err
+		return uuid.Nil, err
 	}
 	
 	// Find user in database
 	user := &auth.User{}
 	err = h.authPlugin.GetDB().Where("sub = ?", sub).First(user).Error
 	if err != nil {
-		return 0, err
+		return uuid.Nil, err
 	}
 	
 	return user.ID, nil
@@ -121,7 +122,7 @@ func (h *AuthCompletionHandler) handleAuthenticatedCompletion(ctx *fasthttp.Requ
 		return
 	}
 	
-	log.Printf("Authenticated API request for user ID: %d", userID)
+	log.Printf("Authenticated API request for user ID: %s", userID)
 	
 	// Parse request
 	var req CompletionRequest

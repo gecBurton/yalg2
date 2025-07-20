@@ -4,12 +4,13 @@ import (
 	"time"
 
 	"bifrost-gov/plugins/auth"
+	"github.com/google/uuid"
 )
 
 // LogEntry represents a secure log entry with user context
 type LogEntry struct {
-	ID             uint       `json:"id" gorm:"primaryKey"`
-	UserID         *uint      `json:"user_id" gorm:"index"`                 // Foreign key to users table
+	ID             uuid.UUID  `json:"id" gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	UserID         *uuid.UUID `json:"user_id" gorm:"type:uuid;index"`       // Foreign key to users table
 	User           *auth.User `json:"user,omitempty" gorm:"foreignKey:UserID"`
 	RequestID      string     `json:"request_id" gorm:"index"`              // Unique request identifier
 	ModelProvider  string     `json:"model_provider"`                       // Which AI provider was used

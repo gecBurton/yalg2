@@ -66,6 +66,7 @@ import (
 	authHandlers "bifrost-gov/pkg/handlers"
 	"bifrost-gov/plugins/auth"
 	"bifrost-gov/plugins/logging"
+	"bifrost-gov/plugins/ratelimit"
 
 	"github.com/fasthttp/router"
 	bifrost "github.com/maximhq/bifrost/core"
@@ -252,19 +253,22 @@ func main() {
 	if databaseURL == "" {
 		log.Fatalf("DATABASE_URL environment variable is required")
 	}
-	
+
 	sharedDB, err := database.NewPostgresConnection(databaseURL)
 	if err != nil {
 		log.Fatalf("Failed to create database connection: %v", err)
 	}
 	log.Println("Shared database connection established")
 
+	// Initialize rate limiting plugin with shared database
+	rateLimitPlugin := ratelimit.NewRateLimitPlugin(sharedDB)
+	loadedPlugins = append(loadedPlugins, rateLimitPlugin)
+	log.Println("Rate limiting plugin initialized with PostgreSQL")
+
 	// Initialize secure logging plugin with shared database
-	if store.ClientConfig.EnableLogging {
-		secureLoggingPlugin := logging.NewSecureLoggingPlugin(sharedDB)
-		loadedPlugins = append(loadedPlugins, secureLoggingPlugin)
-		log.Println("Secure logging plugin initialized with PostgreSQL")
-	}
+	secureLoggingPlugin := logging.NewSecureLoggingPlugin(sharedDB)
+	loadedPlugins = append(loadedPlugins, secureLoggingPlugin)
+	log.Println("Secure logging plugin initialized with PostgreSQL")
 
 	client, err := bifrost.Init(schemas.BifrostConfig{
 		Account:            account,
@@ -282,22 +286,22 @@ func main() {
 
 	// Initialize handlers
 	providerHandler := handlers.NewProviderHandler(store, client, logger)
-	
+
 	// Use authenticated completion handler
 	authCompletionHandler, err := authHandlers.NewAuthCompletionHandler(client, logger, sharedDB)
 	if err != nil {
 		log.Fatalf("Failed to create authenticated completion handler: %v", err)
 	}
 	log.Println("Using authenticated completion handler")
-	
+
 	mcpHandler := handlers.NewMCPHandler(client, logger, store)
 	integrationHandler := handlers.NewIntegrationHandler(client)
 	configHandler := handlers.NewConfigHandler(client, logger, store, configPath)
-	
+
 	// Create auth handler with shared database
 	authHandler := auth.NewAuthHandlerWithDB(store, sharedDB)
 	log.Println("Auth handler configured with shared database access")
-	
+
 	// Create logging handler with shared database
 	loggingHandler := logging.NewLoggingHandler(sharedDB)
 	log.Println("Logging handler configured with shared database access")
@@ -315,7 +319,7 @@ func main() {
 
 	// Register authentication routes
 	authHandler.RegisterRoutes(r)
-	
+
 	// Register logging routes
 	loggingHandler.RegisterRoutes(r)
 
