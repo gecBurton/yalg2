@@ -317,7 +317,7 @@
                 html += `<td class="govuk-table__cell">${time}</td>`;
                 html += `<td class="govuk-table__cell">${call.model_name || '-'}</td>`;
                 html += `<td class="govuk-table__cell">${call.model_provider || '-'}</td>`;
-                html += `<td class="govuk-table__cell">${call.tokens_used || 0}</td>`;
+                html += `<td class="govuk-table__cell">${call.total_tokens || 0}</td>`;
                 html += `<td class="govuk-table__cell">${call.response_time_ms}ms</td>`;
                 html += `<td class="govuk-table__cell"><span class="govuk-tag ${statusClass}">${call.status_code}</span></td>`;
                 html += '</tr>';

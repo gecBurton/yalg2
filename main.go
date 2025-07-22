@@ -53,6 +53,7 @@ import (
 	// "embed"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
 	"time"
 
@@ -97,7 +98,7 @@ func (a *accountWrapper) GetKeysForProvider(ctx *context.Context, providerKey sc
 	return a.BaseAccount.GetKeysForProvider(providerKey)
 }
 
-// LoggedCompletionHandler wraps Bifrost handlers with PostgreSQL logging
+// LoggedCompletionHandler wraps Bifrost handlers with enhanced PostgreSQL logging
 type LoggedCompletionHandler struct {
 	handler *handlers.CompletionHandler
 	logger  *database.PostgresLogger
@@ -121,20 +122,49 @@ func (l *LoggedCompletionHandler) wrapWithLogging(tempRouter *router.Router, pat
 
 	return func(ctx *fasthttp.RequestCtx) {
 		startTime := time.Now()
+		requestID := fmt.Sprintf("req-%d", time.Now().UnixNano())
 
 		// Extract request info for logging
 		userID, model, provider := l.extractRequestInfo(ctx)
+		
+		// Capture request body and other context
+		requestBody := ctx.PostBody()
+		clientIP := string(ctx.Request.Header.Peek("X-Forwarded-For"))
+		if clientIP == "" {
+			clientIP = ctx.RemoteIP().String()
+		}
+		userAgent := string(ctx.Request.Header.Peek("User-Agent"))
+		
+		// Check if this is a streaming request
+		isStreaming := l.isStreamingRequest(requestBody)
+		
+		// Set context values for potential use by Bifrost
+		ctx.SetUserValue("request_id", requestID)
+		ctx.SetUserValue("request_start_time", startTime)
+		ctx.SetUserValue("client_ip", clientIP)
+		ctx.SetUserValue("user_agent", userAgent)
+		ctx.SetUserValue("request_body", requestBody)
+		ctx.SetUserValue("is_streaming", isStreaming)
 
-		// Call original handler
+		// Log streaming start if applicable
+		if isStreaming {
+			l.logger.LogStreamingUpdate(userID, requestID, "start", "")
+		}
+
+		// Call original handler (GitHub plugin will capture detailed logs automatically)
 		originalHandler(ctx)
 
-		// Extract response info and log
+		// Extract response info for our PostgreSQL logging
 		statusCode := ctx.Response.StatusCode()
 		errorMessage := l.extractErrorMessage(ctx.Response.Body())
 		responseTime := int(time.Since(startTime).Milliseconds())
+		responseBody := ctx.Response.Body()
+		
+		// Extract token usage from response if available
+		tokensUsed := l.extractTokenUsage(responseBody)
 
-		// Log the request
-		l.logger.LogAPIRequest(userID, requestType, model, provider, statusCode, errorMessage, responseTime, 0)
+		// Use the enhanced LogAPIRequestWithContext method for our PostgreSQL logs
+		l.logger.LogAPIRequestWithContext(userID, requestType, model, provider, statusCode, errorMessage, responseTime, tokensUsed, requestID, clientIP, userAgent, isStreaming, requestBody, responseBody)
 	}
 }
 
@@ -162,6 +192,30 @@ func (l *LoggedCompletionHandler) extractRequestInfo(ctx *fasthttp.RequestCtx) (
 	}
 
 	return userID, model, provider
+}
+
+// isStreamingRequest checks if the request is for streaming
+func (l *LoggedCompletionHandler) isStreamingRequest(requestBody []byte) bool {
+	var reqMap map[string]interface{}
+	if err := json.Unmarshal(requestBody, &reqMap); err == nil {
+		if stream, ok := reqMap["stream"].(bool); ok {
+			return stream
+		}
+	}
+	return false
+}
+
+// extractTokenUsage extracts token usage from response body
+func (l *LoggedCompletionHandler) extractTokenUsage(responseBody []byte) int {
+	var respMap map[string]interface{}
+	if err := json.Unmarshal(responseBody, &respMap); err == nil {
+		if usage, ok := respMap["usage"].(map[string]interface{}); ok {
+			if total, ok := usage["total_tokens"].(float64); ok {
+				return int(total)
+			}
+		}
+	}
+	return 0
 }
 
 // extractErrorMessage extracts error message from response body
@@ -365,12 +419,18 @@ func main() {
 	}
 	log.Println("Authentication middleware initialized")
 
-	// Create custom PostgreSQL logger
+	// Create custom PostgreSQL logger with enhanced features
 	postgresLogger, err := database.NewPostgresLogger(sharedDB, schemas.LogLevelInfo)
 	if err != nil {
 		log.Fatalf("Failed to create PostgreSQL logger: %v", err)
 	}
-	log.Println("PostgreSQL logger initialized")
+	
+	// Start periodic cleanup (clean logs older than 30 days, run every 24 hours)
+	postgresLogger.StartPeriodicCleanup(24*time.Hour, 30*24*time.Hour)
+	log.Println("PostgreSQL logger initialized with async processing and cleanup")
+
+	// Enhanced PostgreSQL logger now includes advanced LLMUsage tracking
+	log.Println("PostgreSQL logger ready with advanced LLMUsage tracking")
 
 	// Initialize rate limiting plugin with shared database
 	rateLimitPlugin := ratelimit.NewRateLimitPlugin(sharedDB)
@@ -398,7 +458,7 @@ func main() {
 	completionHandler := handlers.NewCompletionHandler(client, postgresLogger)
 	log.Println("Using standard completion handler with auth middleware")
 
-	// Wrap completion handler with API request logging
+	// Wrap completion handler with enhanced PostgreSQL logging
 	loggedCompletionHandler := &LoggedCompletionHandler{
 		handler: completionHandler,
 		logger:  postgresLogger,
@@ -415,9 +475,9 @@ func main() {
 	}
 	log.Println("Web auth handler configured with shared database access")
 
-	// Create logging handler with PostgreSQL logger
+	// Create unified logging handler with PostgreSQL logger (includes basic + enhanced endpoints)
 	loggingHandler := webHandlers.NewLoggingHandler(postgresLogger)
-	log.Println("Logging handler configured with PostgreSQL logger")
+	log.Println("Unified logging handler configured with PostgreSQL logger (basic + enhanced endpoints)")
 
 	// Note: WebSocket logging handlers removed in favor of secure PostgreSQL logging
 
@@ -433,7 +493,7 @@ func main() {
 	// Register web authentication routes
 	webAuthHandler.RegisterRoutes(r)
 
-	// Register logging routes
+	// Register unified logging routes (includes /metrics + /api/* endpoints)
 	loggingHandler.RegisterRoutes(r)
 
 	// Add UI routes - serve the local index.html (these should be LAST)
@@ -458,5 +518,7 @@ func main() {
 		log.Fatalf("Error starting server: %v", err)
 	}
 
+	// Cleanup resources
+	postgresLogger.Close()
 	client.Cleanup()
 }
