@@ -17,6 +17,42 @@
         "concurrency": 3,
         "buffer_size": 10
       }
+    },
+    "anthropic": {
+      "keys": [
+        {
+          "value": "env.ANTHROPIC_API_KEY",
+          "models": ["claude-3-5-sonnet-20240620"],
+          "weight": 1.0
+        }
+      ],
+      "network_config": {
+        "default_request_timeout_in_seconds": 30,
+        "max_retries": 1,
+        "retry_backoff_initial_ms": 100,
+        "retry_backoff_max_ms": 2000
+      },
+      "concurrency_and_buffer_size": {
+        "concurrency": 3,
+        "buffer_size": 10
+      }
+    },
+    "vertex": {
+      "keys": [
+        {
+          "models": ["gemini-2.0-flash-001"],
+          "weight": 1.0,
+          "vertex_key_config": {
+            "project_id": "env.VERTEX_PROJECT_ID",
+            "region": "eu-west1",
+            "auth_credentials": "env.VERTEX_CREDENTIALS"
+          }
+        }
+      ],
+      "concurrency_and_buffer_size": {
+        "concurrency": 3,
+        "buffer_size": 10
+      }
     }
   }
 }

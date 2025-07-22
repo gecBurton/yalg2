@@ -6,42 +6,49 @@ A government-focused AI proxy built on [Bifrost](https://github.com/maximhq/bifr
 
 ### Authentication Architecture
 
-This application implements a dual authentication system to handle both web-based and API-based access:
+This application implements a unified authentication system using systematic middleware to protect all API routes:
 
-#### 1. Web Authentication (`plugins/auth/`)
-- **Purpose**: Browser-based OIDC login flows for the web interface
+#### 1. Authentication Middleware (`internal/middleware/auth.go`)
+- **Purpose**: Centralized JWT authentication for all protected routes
+- **Implementation**: FastHTTP middleware that validates Bearer tokens before requests reach handlers
+- **Protected Routes**: All `/v1/*` and `/api/*` endpoints, plus `/metrics`
+- **Public Routes**: Authentication flows (`/auth/*`), UI assets (`/`, `/ui/*`, `/static/*`)
+- **Flow**: Validates JWT tokens, injects user context, passes through to handlers
+
+#### 2. Web Authentication (`plugins/auth/`)
+- **Purpose**: Browser-based OIDC login flows for the web interface  
 - **Routes**: `/auth/login`, `/auth/callback`, `/auth/logout`, `/auth/status`
 - **Flow**: Redirects users to Dex OIDC provider, handles callbacks, manages sessions
 - **Storage**: Uses cookies and database sessions for web users
 - **Implementation**: `plugins/auth/handler.go`
 
-#### 2. API Authentication (`pkg/handlers/auth_completion.go`)
-- **Purpose**: JWT token validation for programmatic API access
-- **Routes**: `/v1/chat/completions`, `/v1/text/completions` (with auth wrapper)
-- **Flow**: Validates Bearer tokens in Authorization headers, injects user context
-- **Storage**: Stateless JWT validation, user context passed to logging
-- **Implementation**: `pkg/handlers/auth_completion.go`
+#### 3. Standard Bifrost Handlers
+- **Purpose**: Use official Bifrost completion handlers without custom auth wrapping
+- **Routes**: `/v1/chat/completions`, `/v1/text/completions` (protected by middleware)
+- **Flow**: Standard Bifrost request handling with authentication handled upstream
+- **Implementation**: Uses `handlers.NewCompletionHandler()` from Bifrost HTTP transport
 
-#### 3. Shared OIDC Services (`plugins/auth/plugin.go`)
+#### 4. Shared OIDC Services (`plugins/auth/plugin.go`)
 - **Purpose**: Common OIDC token verification and user management
 - **Provides**: JWT verifier, database operations, user storage
-- **Shared by**: Both web handlers and API handlers use these services
+- **Shared by**: Both web handlers and authentication middleware
 
 #### Why This Architecture?
 
-**Different Access Patterns**: Web browsers need redirect-based OIDC flows with cookies, while API clients need stateless JWT token validation.
+**Systematic Protection**: Authentication middleware automatically protects all API routes without requiring individual handler modifications.
 
-**Header Access Limitation**: Bifrost plugins cannot access HTTP headers (like `Authorization: Bearer <token>`), so API authentication must happen at the HTTP handler level before requests reach Bifrost.
+**Header Access Solution**: Since Bifrost plugins cannot access HTTP headers (like `Authorization: Bearer <token>`), authentication happens at the web server level before requests reach Bifrost handlers.
 
-**Clean Separation**: Web auth handles human users, API auth handles programmatic access, shared services provide common functionality.
+**Cleaner Implementation**: Eliminates the need for custom authentication wrappers around each endpoint - standard Bifrost handlers work with systematic authentication.
 
 ## Features
 
-- Dual authentication: OIDC web flows + JWT API validation
-- PostgreSQL database for user and session storage
-- GORM for database operations
-- Comprehensive request logging with user context
-- Fail-fast database requirement
+- **Systematic Authentication**: Middleware-based JWT validation protecting all API routes
+- **OIDC Integration**: Browser-based authentication flows using Dex OIDC provider
+- **PostgreSQL Storage**: User and session data with GORM for database operations
+- **Comprehensive Logging**: Request logging with authenticated user context
+- **Standard Bifrost Handlers**: Uses official completion handlers with upstream authentication
+- **Fail-fast Database**: Requires DATABASE_URL environment variable for startup
 
 ## Quick Start
 
@@ -140,12 +147,12 @@ go test ./...
 
 ## Components
 
-### Authentication (`plugins/auth/` + `pkg/handlers/`)
+### Authentication (`plugins/auth/` + `internal/middleware/`)
 
 - **`plugins/auth/plugin.go`** - OIDC services and shared user management
 - **`plugins/auth/handler.go`** - Web authentication routes (login/logout/callback/status)
 - **`plugins/auth/models.go`** - User and Session data models
-- **`pkg/handlers/auth_completion.go`** - API JWT authentication wrapper for completion endpoints
+- **`internal/middleware/auth.go`** - Systematic JWT authentication middleware for all API routes
 
 ### Logging (`plugins/logging/`)
 

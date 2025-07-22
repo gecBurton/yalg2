@@ -210,7 +210,11 @@
 
         async function loadAvailableModels() {
             try {
-                const response = await fetch('/api/providers');
+                const response = await fetch('/api/providers', {
+                    headers: {
+                        'Authorization': `Bearer ${userToken}`
+                    }
+                });
                 const data = await response.json();
                 
                 console.log('Providers data:', data); // Debug log
@@ -250,7 +254,11 @@
 
         async function loadBasicStats() {
             try {
-                const response = await fetch('/metrics');
+                const response = await fetch('/metrics', {
+                    headers: {
+                        'Authorization': `Bearer ${userToken}`
+                    }
+                });
                 
                 if (!response.ok) {
                     console.log('Metrics response not OK:', response.status, response.statusText);

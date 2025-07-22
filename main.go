@@ -63,7 +63,7 @@ import (
 	"context"
 
 	"bifrost-gov/internal/database"
-	authHandlers "bifrost-gov/internal/handlers"
+	"bifrost-gov/internal/middleware"
 	"bifrost-gov/plugins/auth"
 	"bifrost-gov/plugins/logging"
 	"bifrost-gov/plugins/ratelimit"
@@ -260,6 +260,13 @@ func main() {
 	}
 	log.Println("Shared database connection established")
 
+	// Initialize authentication middleware
+	authMiddleware, err := middleware.NewAuthMiddleware(middleware.DefaultAuthConfig(), sharedDB)
+	if err != nil {
+		log.Fatalf("Failed to create auth middleware: %v", err)
+	}
+	log.Println("Authentication middleware initialized")
+
 	// Initialize rate limiting plugin with shared database
 	rateLimitPlugin := ratelimit.NewRateLimitPlugin(sharedDB)
 	loadedPlugins = append(loadedPlugins, rateLimitPlugin)
@@ -287,12 +294,9 @@ func main() {
 	// Initialize handlers
 	providerHandler := handlers.NewProviderHandler(store, client, logger)
 
-	// Use authenticated completion handler
-	authCompletionHandler, err := authHandlers.NewAuthCompletionHandler(client, logger, sharedDB)
-	if err != nil {
-		log.Fatalf("Failed to create authenticated completion handler: %v", err)
-	}
-	log.Println("Using authenticated completion handler")
+	// Create standard completion handler (auth will be handled by middleware)
+	completionHandler := handlers.NewCompletionHandler(client, logger)
+	log.Println("Using standard completion handler with auth middleware")
 
 	mcpHandler := handlers.NewMCPHandler(client, logger, store)
 	integrationHandler := handlers.NewIntegrationHandler(client)
@@ -312,7 +316,7 @@ func main() {
 
 	// Register all handler routes FIRST (API routes take precedence)
 	providerHandler.RegisterRoutes(r)
-	authCompletionHandler.RegisterRoutes(r)
+	completionHandler.RegisterRoutes(r)
 	mcpHandler.RegisterRoutes(r)
 	integrationHandler.RegisterRoutes(r)
 	configHandler.RegisterRoutes(r)
@@ -336,9 +340,12 @@ func main() {
 
 	// Apply CORS middleware to all routes
 	corsHandler := corsMiddleware(r.Handler)
+	
+	// Apply authentication middleware to protected routes
+	finalHandler := authMiddleware.Handler(corsHandler)
 
 	log.Printf("Successfully started bifrost. Serving UI on http://localhost:%s", port)
-	if err := fasthttp.ListenAndServe(":"+port, corsHandler); err != nil {
+	if err := fasthttp.ListenAndServe(":"+port, finalHandler); err != nil {
 		log.Fatalf("Error starting server: %v", err)
 	}
 
