@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"bifrost-gov/plugins/auth"
+	"bifrost-gov/internal/models"
 	"github.com/google/uuid"
 	"github.com/maximhq/bifrost/core/schemas"
 	"gorm.io/gorm"
@@ -46,7 +46,7 @@ func (p *RateLimitPlugin) PreHook(ctx *context.Context, req *schemas.BifrostRequ
 	}
 
 	// Get user's rate limit from database
-	var user auth.User
+	var user models.User
 	if err := p.db.First(&user, userID).Error; err != nil {
 		return req, nil, nil // User not found, skip rate limiting
 	}
@@ -91,7 +91,7 @@ func (p *RateLimitPlugin) GetUserRateLimit(userID uuid.UUID) (int, error) {
 		return 0, fmt.Errorf("database not available")
 	}
 
-	var user auth.User
+	var user models.User
 	if err := p.db.First(&user, userID).Error; err != nil {
 		return 0, err
 	}
@@ -121,5 +121,5 @@ func (p *RateLimitPlugin) UpdateUserRateLimit(userID uuid.UUID, newLimit int) er
 		return fmt.Errorf("database not available")
 	}
 
-	return p.db.Model(&auth.User{}).Where("id = ?", userID).Update("max_requests_per_minute", newLimit).Error
+	return p.db.Model(&models.User{}).Where("id = ?", userID).Update("max_requests_per_minute", newLimit).Error
 }

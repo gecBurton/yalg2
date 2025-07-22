@@ -3,7 +3,7 @@ package logging
 import (
 	"time"
 
-	"bifrost-gov/plugins/auth"
+	"bifrost-gov/internal/models"
 	"github.com/google/uuid"
 )
 
@@ -11,7 +11,7 @@ import (
 type LogEntry struct {
 	ID             uuid.UUID  `json:"id" gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 	UserID         *uuid.UUID `json:"user_id" gorm:"type:uuid;index"`       // Foreign key to users table
-	User           *auth.User `json:"user,omitempty" gorm:"foreignKey:UserID"`
+	User           *models.User `json:"user,omitempty" gorm:"foreignKey:UserID"`
 	RequestID      string     `json:"request_id" gorm:"index"`              // Unique request identifier
 	ModelProvider  string     `json:"model_provider"`                       // Which AI provider was used
 	ModelName      string     `json:"model_name"`                           // Model name (e.g., gpt-4, claude-3)

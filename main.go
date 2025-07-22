@@ -63,8 +63,8 @@ import (
 	"context"
 
 	"bifrost-gov/internal/database"
+	webHandlers "bifrost-gov/internal/handlers"
 	"bifrost-gov/internal/middleware"
-	"bifrost-gov/plugins/auth"
 	"bifrost-gov/plugins/logging"
 	"bifrost-gov/plugins/ratelimit"
 
@@ -302,9 +302,12 @@ func main() {
 	integrationHandler := handlers.NewIntegrationHandler(client)
 	configHandler := handlers.NewConfigHandler(client, logger, store, configPath)
 
-	// Create auth handler with shared database
-	authHandler := auth.NewAuthHandlerWithDB(store, sharedDB)
-	log.Println("Auth handler configured with shared database access")
+	// Create web auth handler with shared database
+	webAuthHandler, err := webHandlers.NewWebAuthHandler(store, sharedDB)
+	if err != nil {
+		log.Fatalf("Failed to create web auth handler: %v", err)
+	}
+	log.Println("Web auth handler configured with shared database access")
 
 	// Create logging handler with shared database
 	loggingHandler := logging.NewLoggingHandler(sharedDB)
@@ -321,8 +324,8 @@ func main() {
 	integrationHandler.RegisterRoutes(r)
 	configHandler.RegisterRoutes(r)
 
-	// Register authentication routes
-	authHandler.RegisterRoutes(r)
+	// Register web authentication routes
+	webAuthHandler.RegisterRoutes(r)
 
 	// Register logging routes
 	loggingHandler.RegisterRoutes(r)

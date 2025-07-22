@@ -3,7 +3,6 @@ package logging
 import (
 	"encoding/json"
 	"log"
-	"time"
 
 	"github.com/fasthttp/router"
 	"github.com/google/uuid"
@@ -38,43 +37,33 @@ type UserMetricsResponse struct {
 
 // metricsHandler returns metrics for the authenticated user
 func (h *LoggingHandler) metricsHandler(ctx *fasthttp.RequestCtx) {
-	// Get user ID from session cookie by looking up in sessions table
-	sessionID := string(ctx.Request.Header.Cookie("session"))
-	if sessionID == "" {
+	// Get user ID from middleware context (injected by auth middleware)
+	userIDValue := ctx.UserValue("user_id")
+	if userIDValue == nil {
 		ctx.SetStatusCode(fasthttp.StatusUnauthorized)
 		ctx.SetBodyString(`{"error": "Not authenticated"}`)
 		return
 	}
 
-	// Query the sessions table directly to get user ID
-	// Define a Session struct that matches the auth plugin's Session table
-	type Session struct {
-		ID        string    `gorm:"primaryKey"`
-		UserID    uuid.UUID `gorm:"type:uuid;index"`
-		ExpiresAt time.Time `gorm:"index"`
-	}
-
-	var session Session
-	err := h.db.Where("id = ? AND expires_at > ?", sessionID, time.Now()).First(&session).Error
-	if err != nil {
-		ctx.SetStatusCode(fasthttp.StatusUnauthorized)
-		ctx.SetBodyString(`{"error": "Invalid or expired session"}`)
-		log.Printf("Session lookup failed for ID %s: %v", sessionID, err)
+	userID, ok := userIDValue.(uuid.UUID)
+	if !ok {
+		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
+		ctx.SetBodyString(`{"error": "Invalid user context"}`)
 		return
 	}
 
 	// Get recent calls for this user
-	recentCalls, err := h.plugin.GetRecentCallsForUser(session.UserID, 10)
+	recentCalls, err := h.plugin.GetRecentCallsForUser(userID, 10)
 	if err != nil {
 		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
 		ctx.SetBodyString(`{"error": "Failed to fetch metrics"}`)
-		log.Printf("Error fetching metrics for user %d: %v", session.UserID, err)
+		log.Printf("Error fetching metrics for user %s: %v", userID, err)
 		return
 	}
 
 	// Count total calls for this user
 	var totalCalls int64
-	h.db.Model(&LogEntry{}).Where("user_id = ?", session.UserID).Count(&totalCalls)
+	h.db.Model(&LogEntry{}).Where("user_id = ?", userID).Count(&totalCalls)
 
 	response := UserMetricsResponse{
 		RecentCalls: recentCalls,

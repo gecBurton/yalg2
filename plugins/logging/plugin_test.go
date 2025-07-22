@@ -6,14 +6,14 @@ import (
 	"testing"
 	"time"
 
+	"bifrost-gov/internal/models"
 	"bifrost-gov/internal/testutil"
-	"bifrost-gov/plugins/auth"
 	"github.com/google/uuid"
 	"github.com/maximhq/bifrost/core/schemas"
 )
 
 func TestNewSecureLoggingPlugin(t *testing.T) {
-	db := testutil.SetupTestDB(t, &auth.User{}, &LogEntry{})
+	db := testutil.SetupTestDB(t, &models.User{}, &LogEntry{})
 	plugin := NewSecureLoggingPlugin(db)
 
 	if plugin == nil {
@@ -42,7 +42,7 @@ func TestNewSecureLoggingPlugin_NilDB(t *testing.T) {
 }
 
 func TestPreHook(t *testing.T) {
-	db := testutil.SetupTestDB(t, &auth.User{}, &LogEntry{})
+	db := testutil.SetupTestDB(t, &models.User{}, &LogEntry{})
 	plugin := NewSecureLoggingPlugin(db)
 
 	ctx := context.Background()
@@ -108,12 +108,12 @@ func TestPostHook_NoDatabase(t *testing.T) {
 }
 
 func TestPostHook_SuccessfulResponse(t *testing.T) {
-	db := testutil.SetupTestDB(t, &auth.User{}, &LogEntry{})
+	db := testutil.SetupTestDB(t, &models.User{}, &LogEntry{})
 	plugin := NewSecureLoggingPlugin(db)
 
 	// Create a test user first
 	userID := uuid.New()
-	user := &auth.User{
+	user := &models.User{
 		ID:   userID,
 		Sub:  "successful-test-user",
 		Name: "Successful Test User",
@@ -189,12 +189,12 @@ func TestPostHook_SuccessfulResponse(t *testing.T) {
 }
 
 func TestPostHook_ErrorResponse(t *testing.T) {
-	db := testutil.SetupTestDB(t, &auth.User{}, &LogEntry{})
+	db := testutil.SetupTestDB(t, &models.User{}, &LogEntry{})
 	plugin := NewSecureLoggingPlugin(db)
 
 	// Create a test user first
 	userID := uuid.New()
-	user := &auth.User{
+	user := &models.User{
 		ID:   userID,
 		Sub:  "error-test-user",
 		Name: "Error Test User",
@@ -251,7 +251,7 @@ func TestPostHook_ErrorResponse(t *testing.T) {
 }
 
 func TestPostHook_ErrorWithoutStatusCode(t *testing.T) {
-	db := testutil.SetupTestDB(t, &auth.User{}, &LogEntry{})
+	db := testutil.SetupTestDB(t, &models.User{}, &LogEntry{})
 	plugin := NewSecureLoggingPlugin(db)
 
 	// Set up context with required values
@@ -280,7 +280,7 @@ func TestPostHook_ErrorWithoutStatusCode(t *testing.T) {
 }
 
 func TestPostHook_NoUserContext(t *testing.T) {
-	db := testutil.SetupTestDB(t, &auth.User{}, &LogEntry{})
+	db := testutil.SetupTestDB(t, &models.User{}, &LogEntry{})
 	plugin := NewSecureLoggingPlugin(db)
 
 	// Set up context without user_id
@@ -305,7 +305,7 @@ func TestPostHook_NoUserContext(t *testing.T) {
 }
 
 func TestPostHook_InvalidUserIDType(t *testing.T) {
-	db := testutil.SetupTestDB(t, &auth.User{}, &LogEntry{})
+	db := testutil.SetupTestDB(t, &models.User{}, &LogEntry{})
 	plugin := NewSecureLoggingPlugin(db)
 
 	// Set up context with invalid user_id type
@@ -331,12 +331,12 @@ func TestPostHook_InvalidUserIDType(t *testing.T) {
 }
 
 func TestGetRecentCallsForUser(t *testing.T) {
-	db := testutil.SetupTestDB(t, &auth.User{}, &LogEntry{})
+	db := testutil.SetupTestDB(t, &models.User{}, &LogEntry{})
 	plugin := NewSecureLoggingPlugin(db)
 
 	// Create a test user
 	userID := uuid.New()
-	user := &auth.User{
+	user := &models.User{
 		ID:    userID,
 		Sub:   "test-user",
 		Email: "test@example.com",
@@ -365,7 +365,7 @@ func TestGetRecentCallsForUser(t *testing.T) {
 
 	// Create log entries for another user (should not be returned)
 	otherUserID := uuid.New()
-	otherUser := &auth.User{
+	otherUser := &models.User{
 		ID:    otherUserID,
 		Sub:   "other-user",
 		Email: "other@example.com",
@@ -442,7 +442,7 @@ func TestGetRecentCallsForUser_NoDatabase(t *testing.T) {
 }
 
 func TestGetRecentCallsForUser_NoEntries(t *testing.T) {
-	db := testutil.SetupTestDB(t, &auth.User{}, &LogEntry{})
+	db := testutil.SetupTestDB(t, &models.User{}, &LogEntry{})
 	plugin := NewSecureLoggingPlugin(db)
 
 	userID := uuid.New()
@@ -457,7 +457,7 @@ func TestGetRecentCallsForUser_NoEntries(t *testing.T) {
 }
 
 func TestCleanup(t *testing.T) {
-	db := testutil.SetupTestDB(t, &auth.User{}, &LogEntry{})
+	db := testutil.SetupTestDB(t, &models.User{}, &LogEntry{})
 	plugin := NewSecureLoggingPlugin(db)
 
 	err := plugin.Cleanup()
@@ -477,12 +477,12 @@ func TestCleanup_NoDatabase(t *testing.T) {
 
 // TestPostHook_CompleteWorkflow tests the complete workflow from PreHook to PostHook
 func TestCompleteWorkflow(t *testing.T) {
-	db := testutil.SetupTestDB(t, &auth.User{}, &LogEntry{})
+	db := testutil.SetupTestDB(t, &models.User{}, &LogEntry{})
 	plugin := NewSecureLoggingPlugin(db)
 
 	// Create a test user
 	userID := uuid.New()
-	user := &auth.User{
+	user := &models.User{
 		ID:    userID,
 		Sub:   "workflow-user",
 		Email: "workflow@example.com",

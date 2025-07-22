@@ -6,7 +6,8 @@ import (
 	"log"
 	"strings"
 
-	"bifrost-gov/plugins/auth"
+	"bifrost-gov/internal/models"
+	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/google/uuid"
 	"github.com/valyala/fasthttp"
 	"gorm.io/gorm"
@@ -20,28 +21,48 @@ type AuthConfig struct {
 	PublicRoutes []string
 }
 
+// OIDCConfig contains OIDC provider configuration
+type OIDCConfig struct {
+	IssuerURL string
+	ClientID  string
+}
+
 // AuthMiddleware handles JWT authentication for protected routes
 type AuthMiddleware struct {
-	config     *AuthConfig
-	authPlugin *auth.AuthPlugin
+	config   *AuthConfig
+	verifier *oidc.IDTokenVerifier
+	db       *gorm.DB
 }
 
 // NewAuthMiddleware creates a new authentication middleware
 func NewAuthMiddleware(config *AuthConfig, db *gorm.DB) (*AuthMiddleware, error) {
-	// Create auth plugin for token validation
-	oidcConfig := &auth.OIDCConfig{
+	// Auto-migrate User model
+	if err := db.AutoMigrate(&models.User{}, &models.Session{}); err != nil {
+		return nil, fmt.Errorf("failed to migrate user models: %w", err)
+	}
+	
+	// Create OIDC provider
+	ctx := context.Background()
+	oidcConfig := &OIDCConfig{
 		IssuerURL: "http://localhost:5556",
 		ClientID:  "bifrost-client",
 	}
 	
-	authPlugin, err := auth.NewAuthPluginWithDB(oidcConfig, db)
+	provider, err := oidc.NewProvider(ctx, oidcConfig.IssuerURL)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create OIDC provider: %w", err)
 	}
 	
+	// Create ID token verifier
+	verifierConfig := &oidc.Config{
+		ClientID: oidcConfig.ClientID,
+	}
+	verifier := provider.Verifier(verifierConfig)
+	
 	return &AuthMiddleware{
-		config:     config,
-		authPlugin: authPlugin,
+		config:   config,
+		verifier: verifier,
+		db:       db,
 	}, nil
 }
 
@@ -114,7 +135,7 @@ func (m *AuthMiddleware) validateJWTAndGetUserID(ctx *fasthttp.RequestCtx) (uuid
 	
 	// Verify the token
 	tempCtx := context.Background()
-	idToken, err := m.authPlugin.GetVerifier().Verify(tempCtx, token)
+	idToken, err := m.verifier.Verify(tempCtx, token)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -131,11 +152,30 @@ func (m *AuthMiddleware) validateJWTAndGetUserID(ctx *fasthttp.RequestCtx) (uuid
 		return uuid.Nil, fmt.Errorf("invalid token subject")
 	}
 	
-	// Find user in database
-	user := &auth.User{}
-	err = m.authPlugin.GetDB().Where("sub = ?", sub).First(user).Error
+	// Find or create user in database
+	user := &models.User{}
+	err = m.db.Where("sub = ?", sub).First(user).Error
 	if err != nil {
-		return uuid.Nil, err
+		if err == gorm.ErrRecordNotFound {
+			// User doesn't exist, create them with claims data
+			email, _ := claims["email"].(string)
+			name, _ := claims["name"].(string)
+			
+			user = &models.User{
+				ID:    uuid.New(),
+				Sub:   sub,
+				Email: email,
+				Name:  name,
+			}
+			
+			if err := m.db.Create(user).Error; err != nil {
+				return uuid.Nil, fmt.Errorf("failed to create user: %w", err)
+			}
+			
+			log.Printf("Created new user: %s (%s)", user.Email, user.ID)
+		} else {
+			return uuid.Nil, fmt.Errorf("failed to query user: %w", err)
+		}
 	}
 	
 	return user.ID, nil
