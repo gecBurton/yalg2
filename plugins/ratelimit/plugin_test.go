@@ -6,15 +6,15 @@ import (
 	"testing"
 	"time"
 
+	"bifrost-gov/internal/database"
 	"bifrost-gov/internal/testutil"
-	"bifrost-gov/internal/models"
-	"bifrost-gov/internal/logger"
+
 	"github.com/google/uuid"
 	"github.com/maximhq/bifrost/core/schemas"
 )
 
 func TestNewRateLimitPlugin(t *testing.T) {
-	db := testutil.SetupTestDB(t, &models.User{}, &logger.LogEntry{})
+	db := testutil.SetupTestDB(t, &database.User{}, &database.LogEntry{})
 	plugin := NewRateLimitPlugin(db)
 
 	if plugin == nil {
@@ -45,7 +45,7 @@ func TestPreHook_NoDatabase(t *testing.T) {
 }
 
 func TestPreHook_NoUserContext(t *testing.T) {
-	db := testutil.SetupTestDB(t, &models.User{}, &logger.LogEntry{})
+	db := testutil.SetupTestDB(t, &database.User{}, &database.LogEntry{})
 	plugin := NewRateLimitPlugin(db)
 	ctx := context.Background()
 	req := &schemas.BifrostRequest{}
@@ -64,7 +64,7 @@ func TestPreHook_NoUserContext(t *testing.T) {
 }
 
 func TestPreHook_UserNotFound(t *testing.T) {
-	db := testutil.SetupTestDB(t, &models.User{}, &logger.LogEntry{})
+	db := testutil.SetupTestDB(t, &database.User{}, &database.LogEntry{})
 	plugin := NewRateLimitPlugin(db)
 	nonExistentUserID := uuid.New()
 	ctx := context.WithValue(context.Background(), "user_id", nonExistentUserID)
@@ -84,12 +84,12 @@ func TestPreHook_UserNotFound(t *testing.T) {
 }
 
 func TestPreHook_WithinRateLimit(t *testing.T) {
-	db := testutil.SetupTestDB(t, &models.User{}, &logger.LogEntry{})
+	db := testutil.SetupTestDB(t, &database.User{}, &database.LogEntry{})
 	plugin := NewRateLimitPlugin(db)
 
 	// Create a test user with rate limit of 10 requests per minute
 	userID := uuid.New()
-	user := &models.User{
+	user := &database.User{
 		ID:                   userID,
 		Sub:                  "test-user",
 		Email:                "test@example.com",
@@ -102,14 +102,14 @@ func TestPreHook_WithinRateLimit(t *testing.T) {
 
 	// Create 5 log entries in the last minute
 	for i := 0; i < 5; i++ {
-		logEntry := &logger.LogEntry{
-			ID:           uuid.New(),
-			UserID:       &userID,
-			RequestID:    fmt.Sprintf("test-request-%d", i),
-			TokensUsed:   10,
-			StatusCode:   200,
-			RequestType:  "chat",
-			CreatedAt:    time.Now().Add(-30 * time.Second),
+		logEntry := &database.LogEntry{
+			ID:          uuid.New(),
+			UserID:      &userID,
+			RequestID:   fmt.Sprintf("test-request-%d", i),
+			TokensUsed:  10,
+			StatusCode:  200,
+			RequestType: "chat",
+			CreatedAt:   time.Now().Add(-30 * time.Second),
 		}
 		if err := db.Create(logEntry).Error; err != nil {
 			t.Fatalf("Failed to create test log entry: %v", err)
@@ -133,12 +133,12 @@ func TestPreHook_WithinRateLimit(t *testing.T) {
 }
 
 func TestPreHook_ExceedsRateLimit(t *testing.T) {
-	db := testutil.SetupTestDB(t, &models.User{}, &logger.LogEntry{})
+	db := testutil.SetupTestDB(t, &database.User{}, &database.LogEntry{})
 	plugin := NewRateLimitPlugin(db)
 
 	// Create a test user with rate limit of 5 requests per minute
 	userID := uuid.New()
-	user := &models.User{
+	user := &database.User{
 		ID:                   userID,
 		Sub:                  "test-user",
 		Email:                "test@example.com",
@@ -151,14 +151,14 @@ func TestPreHook_ExceedsRateLimit(t *testing.T) {
 
 	// Create 5 log entries in the last minute (exactly at the limit)
 	for i := 0; i < 5; i++ {
-		logEntry := &logger.LogEntry{
-			ID:           uuid.New(),
-			UserID:       &userID,
-			RequestID:    fmt.Sprintf("limit-request-%d", i),
-			TokensUsed:   10,
-			StatusCode:   200,
-			RequestType:  "chat",
-			CreatedAt:    time.Now().Add(-30 * time.Second),
+		logEntry := &database.LogEntry{
+			ID:          uuid.New(),
+			UserID:      &userID,
+			RequestID:   fmt.Sprintf("limit-request-%d", i),
+			TokensUsed:  10,
+			StatusCode:  200,
+			RequestType: "chat",
+			CreatedAt:   time.Now().Add(-30 * time.Second),
 		}
 		if err := db.Create(logEntry).Error; err != nil {
 			t.Fatalf("Failed to create test log entry: %v", err)
@@ -187,12 +187,12 @@ func TestPreHook_ExceedsRateLimit(t *testing.T) {
 }
 
 func TestPreHook_OldRequestsIgnored(t *testing.T) {
-	db := testutil.SetupTestDB(t, &models.User{}, &logger.LogEntry{})
+	db := testutil.SetupTestDB(t, &database.User{}, &database.LogEntry{})
 	plugin := NewRateLimitPlugin(db)
 
 	// Create a test user with rate limit of 5 requests per minute
 	userID := uuid.New()
-	user := &models.User{
+	user := &database.User{
 		ID:                   userID,
 		Sub:                  "test-user",
 		Email:                "test@example.com",
@@ -205,14 +205,14 @@ func TestPreHook_OldRequestsIgnored(t *testing.T) {
 
 	// Create 10 log entries older than 1 minute (should be ignored)
 	for i := 0; i < 10; i++ {
-		logEntry := &logger.LogEntry{
-			ID:           uuid.New(),
-			UserID:       &userID,
-			RequestID:    fmt.Sprintf("old-request-%d", i),
-			TokensUsed:   10,
-			StatusCode:   200,
-			RequestType:  "chat",
-			CreatedAt:    time.Now().Add(-2 * time.Minute),
+		logEntry := &database.LogEntry{
+			ID:          uuid.New(),
+			UserID:      &userID,
+			RequestID:   fmt.Sprintf("old-request-%d", i),
+			TokensUsed:  10,
+			StatusCode:  200,
+			RequestType: "chat",
+			CreatedAt:   time.Now().Add(-2 * time.Minute),
 		}
 		if err := db.Create(logEntry).Error; err != nil {
 			t.Fatalf("Failed to create test log entry: %v", err)
@@ -221,14 +221,14 @@ func TestPreHook_OldRequestsIgnored(t *testing.T) {
 
 	// Create 2 recent log entries (within the limit)
 	for i := 0; i < 2; i++ {
-		logEntry := &logger.LogEntry{
-			ID:           uuid.New(),
-			UserID:       &userID,
-			RequestID:    fmt.Sprintf("recent-request-%d", i),
-			TokensUsed:   10,
-			StatusCode:   200,
-			RequestType:  "chat",
-			CreatedAt:    time.Now().Add(-30 * time.Second),
+		logEntry := &database.LogEntry{
+			ID:          uuid.New(),
+			UserID:      &userID,
+			RequestID:   fmt.Sprintf("recent-request-%d", i),
+			TokensUsed:  10,
+			StatusCode:  200,
+			RequestType: "chat",
+			CreatedAt:   time.Now().Add(-30 * time.Second),
 		}
 		if err := db.Create(logEntry).Error; err != nil {
 			t.Fatalf("Failed to create test log entry: %v", err)
@@ -252,12 +252,12 @@ func TestPreHook_OldRequestsIgnored(t *testing.T) {
 }
 
 func TestGetUserRateLimit(t *testing.T) {
-	db := testutil.SetupTestDB(t, &models.User{}, &logger.LogEntry{})
+	db := testutil.SetupTestDB(t, &database.User{}, &database.LogEntry{})
 	plugin := NewRateLimitPlugin(db)
 
 	// Create a test user
 	userID := uuid.New()
-	user := &models.User{
+	user := &database.User{
 		ID:                   userID,
 		Sub:                  "test-user",
 		Email:                "test@example.com",
@@ -278,12 +278,12 @@ func TestGetUserRateLimit(t *testing.T) {
 }
 
 func TestGetUserRequestCount(t *testing.T) {
-	db := testutil.SetupTestDB(t, &models.User{}, &logger.LogEntry{})
+	db := testutil.SetupTestDB(t, &database.User{}, &database.LogEntry{})
 	plugin := NewRateLimitPlugin(db)
 
 	// Create a test user first
 	userID := uuid.New()
-	user := &models.User{
+	user := &database.User{
 		ID:                   userID,
 		Sub:                  "count-test-user",
 		Email:                "count@example.com",
@@ -296,14 +296,14 @@ func TestGetUserRequestCount(t *testing.T) {
 
 	// Create 3 log entries in the last minute
 	for i := 0; i < 3; i++ {
-		logEntry := &logger.LogEntry{
-			ID:           uuid.New(),
-			UserID:       &userID,
-			RequestID:    fmt.Sprintf("count-request-%d", i),
-			TokensUsed:   10,
-			StatusCode:   200,
-			RequestType:  "chat",
-			CreatedAt:    time.Now().Add(-30 * time.Second),
+		logEntry := &database.LogEntry{
+			ID:          uuid.New(),
+			UserID:      &userID,
+			RequestID:   fmt.Sprintf("count-request-%d", i),
+			TokensUsed:  10,
+			StatusCode:  200,
+			RequestType: "chat",
+			CreatedAt:   time.Now().Add(-30 * time.Second),
 		}
 		if err := db.Create(logEntry).Error; err != nil {
 			t.Fatalf("Failed to create test log entry: %v", err)
@@ -312,14 +312,14 @@ func TestGetUserRequestCount(t *testing.T) {
 
 	// Create 2 log entries older than 1 minute (should be ignored)
 	for i := 0; i < 2; i++ {
-		logEntry := &logger.LogEntry{
-			ID:           uuid.New(),
-			UserID:       &userID,
-			RequestID:    fmt.Sprintf("old-count-request-%d", i),
-			TokensUsed:   10,
-			StatusCode:   200,
-			RequestType:  "chat",
-			CreatedAt:    time.Now().Add(-2 * time.Minute),
+		logEntry := &database.LogEntry{
+			ID:          uuid.New(),
+			UserID:      &userID,
+			RequestID:   fmt.Sprintf("old-count-request-%d", i),
+			TokensUsed:  10,
+			StatusCode:  200,
+			RequestType: "chat",
+			CreatedAt:   time.Now().Add(-2 * time.Minute),
 		}
 		if err := db.Create(logEntry).Error; err != nil {
 			t.Fatalf("Failed to create test log entry: %v", err)
@@ -336,12 +336,12 @@ func TestGetUserRequestCount(t *testing.T) {
 }
 
 func TestUpdateUserRateLimit(t *testing.T) {
-	db := testutil.SetupTestDB(t, &models.User{}, &logger.LogEntry{})
+	db := testutil.SetupTestDB(t, &database.User{}, &database.LogEntry{})
 	plugin := NewRateLimitPlugin(db)
 
 	// Create a test user
 	userID := uuid.New()
-	user := &models.User{
+	user := &database.User{
 		ID:                   userID,
 		Sub:                  "test-user",
 		Email:                "test@example.com",
@@ -369,7 +369,7 @@ func TestUpdateUserRateLimit(t *testing.T) {
 }
 
 func TestPostHook(t *testing.T) {
-	db := testutil.SetupTestDB(t, &models.User{}, &logger.LogEntry{})
+	db := testutil.SetupTestDB(t, &database.User{}, &database.LogEntry{})
 	plugin := NewRateLimitPlugin(db)
 
 	ctx := context.Background()
@@ -390,7 +390,7 @@ func TestPostHook(t *testing.T) {
 }
 
 func TestCleanup(t *testing.T) {
-	db := testutil.SetupTestDB(t, &models.User{}, &logger.LogEntry{})
+	db := testutil.SetupTestDB(t, &database.User{}, &database.LogEntry{})
 	plugin := NewRateLimitPlugin(db)
 
 	err := plugin.Cleanup()

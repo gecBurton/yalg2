@@ -1,35 +1,59 @@
-package logger
+package database
 
 import (
+	"time"
+
 	"context"
 	"fmt"
 	"log"
-	"time"
 
-	"bifrost-gov/internal/models"
 	"github.com/google/uuid"
 	"github.com/maximhq/bifrost/core/schemas"
 	"gorm.io/gorm"
 )
 
+// User represents a user in the system
+type User struct {
+	ID                   uuid.UUID      `json:"id" gorm:"type:uuid;primary_key;"`
+	Sub                  string         `json:"sub" gorm:"uniqueIndex;not null"` // OIDC subject identifier
+	Email                string         `json:"email" gorm:"index"`
+	Name                 string         `json:"name"`
+	MaxRequestsPerMinute int            `json:"max_requests_per_minute" gorm:"default:60"` // Rate limit
+	CreatedAt            time.Time      `json:"created_at"`
+	UpdatedAt            time.Time      `json:"updated_at"`
+	DeletedAt            gorm.DeletedAt `json:"deleted_at" gorm:"index"`
+}
+
+// Session represents a user session
+type Session struct {
+	ID        string         `json:"id" gorm:"primary_key"`
+	UserID    uuid.UUID      `json:"user_id" gorm:"type:uuid;not null;index"`
+	User      User           `json:"user" gorm:"foreignKey:UserID"`
+	IDToken   string         `json:"id_token"`
+	ExpiresAt time.Time      `json:"expires_at" gorm:"index"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
+}
+
 // LogEntry represents a log entry stored in PostgreSQL
 type LogEntry struct {
-	ID             uuid.UUID    `json:"id" gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	UserID         *uuid.UUID   `json:"user_id" gorm:"type:uuid;index"`       // Foreign key to users table
-	User           *models.User `json:"user,omitempty" gorm:"foreignKey:UserID"`
-	Level          string       `json:"level" gorm:"index"`                   // DEBUG, INFO, WARN, ERROR
-	Message        string       `json:"message"`                              // Log message
-	RequestID      string       `json:"request_id" gorm:"index"`              // Unique request identifier
-	ModelProvider  string       `json:"model_provider"`                       // Which AI provider was used
-	ModelName      string       `json:"model_name"`                           // Model name (e.g., gpt-4, claude-3)
-	TokensUsed     int          `json:"tokens_used"`                          // Number of tokens consumed
-	ResponseTimeMs int          `json:"response_time_ms"`                     // Response time in milliseconds
-	StatusCode     int          `json:"status_code"`                          // HTTP status code
-	ErrorMessage   string       `json:"error_message,omitempty"`              // Error message if request failed
-	RequestType    string       `json:"request_type"`                         // Type: "chat", "completion", "embedding", etc.
-	IPAddress      string       `json:"ip_address,omitempty"`                 // Client IP (optional)
-	UserAgent      string       `json:"user_agent,omitempty"`                 // Client user agent (optional)
-	CreatedAt      time.Time    `json:"created_at"`
+	ID             uuid.UUID  `json:"id" gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	UserID         *uuid.UUID `json:"user_id" gorm:"type:uuid;index"` // Foreign key to users table
+	User           *User      `json:"user,omitempty" gorm:"foreignKey:UserID"`
+	Level          string     `json:"level" gorm:"index"`      // DEBUG, INFO, WARN, ERROR
+	Message        string     `json:"message"`                 // Log message
+	RequestID      string     `json:"request_id" gorm:"index"` // Unique request identifier
+	ModelProvider  string     `json:"model_provider"`          // Which AI provider was used
+	ModelName      string     `json:"model_name"`              // Model name (e.g., gpt-4, claude-3)
+	TokensUsed     int        `json:"tokens_used"`             // Number of tokens consumed
+	ResponseTimeMs int        `json:"response_time_ms"`        // Response time in milliseconds
+	StatusCode     int        `json:"status_code"`             // HTTP status code
+	ErrorMessage   string     `json:"error_message,omitempty"` // Error message if request failed
+	RequestType    string     `json:"request_type"`            // Type: "chat", "completion", "embedding", etc.
+	IPAddress      string     `json:"ip_address,omitempty"`    // Client IP (optional)
+	UserAgent      string     `json:"user_agent,omitempty"`    // Client user agent (optional)
+	CreatedAt      time.Time  `json:"created_at"`
 }
 
 // PostgresLogger implements Bifrost's Logger interface and stores logs in PostgreSQL

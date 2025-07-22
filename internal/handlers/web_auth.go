@@ -11,7 +11,8 @@ import (
 	"net/url"
 	"time"
 
-	"bifrost-gov/internal/models"
+	"bifrost-gov/internal/database"
+
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/fasthttp/router"
 	"github.com/google/uuid"
@@ -30,7 +31,7 @@ type WebAuthHandler struct {
 // NewWebAuthHandler creates a new web authentication handler
 func NewWebAuthHandler(store *lib.ConfigStore, db *gorm.DB) (*WebAuthHandler, error) {
 	// Auto-migrate models
-	if err := db.AutoMigrate(&models.User{}, &models.Session{}); err != nil {
+	if err := db.AutoMigrate(&database.User{}, &database.Session{}); err != nil {
 		return nil, fmt.Errorf("failed to migrate auth models: %w", err)
 	}
 
@@ -161,7 +162,7 @@ func (h *WebAuthHandler) callbackHandler(ctx *fasthttp.RequestCtx) {
 	}
 
 	// Find or create user
-	user := &models.User{}
+	user := &database.User{}
 	err = h.db.Where("sub = ?", sub).First(user).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -169,7 +170,7 @@ func (h *WebAuthHandler) callbackHandler(ctx *fasthttp.RequestCtx) {
 			email, _ := claims["email"].(string)
 			name, _ := claims["name"].(string)
 
-			user = &models.User{
+			user = &database.User{
 				ID:    uuid.New(),
 				Sub:   sub,
 				Email: email,
@@ -198,7 +199,7 @@ func (h *WebAuthHandler) callbackHandler(ctx *fasthttp.RequestCtx) {
 		return
 	}
 
-	session := &models.Session{
+	session := &database.Session{
 		ID:        sessionID,
 		UserID:    user.ID,
 		IDToken:   tokenResp.IDToken,
@@ -216,7 +217,7 @@ func (h *WebAuthHandler) callbackHandler(ctx *fasthttp.RequestCtx) {
 	cookie.SetKey("session")
 	cookie.SetValue(sessionID)
 	cookie.SetHTTPOnly(true)
-	cookie.SetSecure(false) // Set to true in production with HTTPS
+	cookie.SetSecure(false)        // Set to true in production with HTTPS
 	cookie.SetMaxAge(24 * 60 * 60) // 24 hours
 	cookie.SetPath("/")
 	ctx.Response.Header.SetCookie(cookie)
@@ -236,7 +237,7 @@ func (h *WebAuthHandler) statusHandler(ctx *fasthttp.RequestCtx) {
 	}
 
 	// Look up session
-	session := &models.Session{}
+	session := &database.Session{}
 	err := h.db.Preload("User").Where("id = ? AND expires_at > ?", sessionID, time.Now()).First(session).Error
 	if err != nil {
 		ctx.SetContentType("application/json")
@@ -263,7 +264,7 @@ func (h *WebAuthHandler) logoutHandler(ctx *fasthttp.RequestCtx) {
 	sessionID := string(ctx.Request.Header.Cookie("session"))
 	if sessionID != "" {
 		// Delete session from database
-		h.db.Where("id = ?", sessionID).Delete(&models.Session{})
+		h.db.Where("id = ?", sessionID).Delete(&database.Session{})
 	}
 
 	// Clear session cookie

@@ -66,7 +66,6 @@ import (
 
 	"bifrost-gov/internal/database"
 	webHandlers "bifrost-gov/internal/handlers"
-	"bifrost-gov/internal/logger"
 	"bifrost-gov/internal/middleware"
 	"bifrost-gov/plugins/ratelimit"
 
@@ -101,7 +100,7 @@ func (a *accountWrapper) GetKeysForProvider(ctx *context.Context, providerKey sc
 // LoggedCompletionHandler wraps Bifrost handlers with PostgreSQL logging
 type LoggedCompletionHandler struct {
 	handler *handlers.CompletionHandler
-	logger  *logger.PostgresLogger
+	logger  *database.PostgresLogger
 }
 
 // RegisterRoutes wraps the original handler routes with logging
@@ -109,7 +108,7 @@ func (l *LoggedCompletionHandler) RegisterRoutes(r *router.Router) {
 	// Get the original routes by registering to a temporary router
 	tempRouter := router.New()
 	l.handler.RegisterRoutes(tempRouter)
-	
+
 	// Wrap the handlers with logging
 	r.POST("/v1/chat/completions", l.wrapWithLogging(tempRouter, "/v1/chat/completions", "chat"))
 	r.POST("/v1/text/completions", l.wrapWithLogging(tempRouter, "/v1/text/completions", "completion"))
@@ -119,21 +118,21 @@ func (l *LoggedCompletionHandler) RegisterRoutes(r *router.Router) {
 func (l *LoggedCompletionHandler) wrapWithLogging(tempRouter *router.Router, path, requestType string) fasthttp.RequestHandler {
 	// Get the original handler
 	originalHandler, _ := tempRouter.Lookup("POST", path, nil)
-	
+
 	return func(ctx *fasthttp.RequestCtx) {
 		startTime := time.Now()
-		
+
 		// Extract request info for logging
 		userID, model, provider := l.extractRequestInfo(ctx)
-		
+
 		// Call original handler
 		originalHandler(ctx)
-		
+
 		// Extract response info and log
 		statusCode := ctx.Response.StatusCode()
 		errorMessage := l.extractErrorMessage(ctx.Response.Body())
 		responseTime := int(time.Since(startTime).Milliseconds())
-		
+
 		// Log the request
 		l.logger.LogAPIRequest(userID, requestType, model, provider, statusCode, errorMessage, responseTime, 0)
 	}
@@ -148,7 +147,7 @@ func (l *LoggedCompletionHandler) extractRequestInfo(ctx *fasthttp.RequestCtx) (
 			userID = uid
 		}
 	}
-	
+
 	// Parse model from request body
 	model, provider := "unknown", "unknown"
 	var requestBody map[string]interface{}
@@ -161,7 +160,7 @@ func (l *LoggedCompletionHandler) extractRequestInfo(ctx *fasthttp.RequestCtx) (
 			}
 		}
 	}
-	
+
 	return userID, model, provider
 }
 
@@ -170,7 +169,7 @@ func (l *LoggedCompletionHandler) extractErrorMessage(responseBody []byte) strin
 	if len(responseBody) == 0 {
 		return ""
 	}
-	
+
 	var respMap map[string]interface{}
 	if err := json.Unmarshal(responseBody, &respMap); err == nil {
 		if errMsg, ok := respMap["error"].(string); ok {
@@ -327,7 +326,7 @@ func main() {
 	// Derive paths from app-dir
 	configPath := filepath.Join(appDir, "config.json")
 
-	// Initialize high-performance configuration store with caching  
+	// Initialize high-performance configuration store with caching
 	tempLogger := bifrost.NewDefaultLogger(schemas.LogLevelInfo)
 	store, err := lib.NewConfigStore(tempLogger)
 	if err != nil {
@@ -367,7 +366,7 @@ func main() {
 	log.Println("Authentication middleware initialized")
 
 	// Create custom PostgreSQL logger
-	postgresLogger, err := logger.NewPostgresLogger(sharedDB, schemas.LogLevelInfo)
+	postgresLogger, err := database.NewPostgresLogger(sharedDB, schemas.LogLevelInfo)
 	if err != nil {
 		log.Fatalf("Failed to create PostgreSQL logger: %v", err)
 	}
@@ -398,7 +397,7 @@ func main() {
 	// Create standard completion handler (auth will be handled by middleware)
 	completionHandler := handlers.NewCompletionHandler(client, postgresLogger)
 	log.Println("Using standard completion handler with auth middleware")
-	
+
 	// Wrap completion handler with API request logging
 	loggedCompletionHandler := &LoggedCompletionHandler{
 		handler: completionHandler,
@@ -450,7 +449,7 @@ func main() {
 
 	// Apply CORS middleware to all routes
 	corsHandler := corsMiddleware(r.Handler)
-	
+
 	// Apply authentication middleware to protected routes
 	finalHandler := authMiddleware.Handler(corsHandler)
 

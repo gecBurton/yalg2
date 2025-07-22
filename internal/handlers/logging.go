@@ -3,7 +3,8 @@ package handlers
 import (
 	"encoding/json"
 
-	"bifrost-gov/internal/logger"
+	"bifrost-gov/internal/database"
+
 	"github.com/fasthttp/router"
 	"github.com/google/uuid"
 	"github.com/valyala/fasthttp"
@@ -11,17 +12,17 @@ import (
 
 // LoggingHandler handles logging-related HTTP routes using the PostgreSQL logger
 type LoggingHandler struct {
-	logger *logger.PostgresLogger
+	logger *database.PostgresLogger
 }
 
 // UserMetricsResponse represents the response format for user metrics
 type UserMetricsResponse struct {
-	RecentCalls []logger.LogEntry `json:"recent_calls"`
-	TotalCalls  int64             `json:"total_calls"`
+	RecentCalls []database.LogEntry `json:"recent_calls"`
+	TotalCalls  int64               `json:"total_calls"`
 }
 
 // NewLoggingHandler creates a new logging handler
-func NewLoggingHandler(postgresLogger *logger.PostgresLogger) *LoggingHandler {
+func NewLoggingHandler(postgresLogger *database.PostgresLogger) *LoggingHandler {
 	return &LoggingHandler{
 		logger: postgresLogger,
 	}
