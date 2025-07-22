@@ -8,6 +8,7 @@ require (
 	github.com/coreos/go-oidc/v3 v3.14.1
 	github.com/fasthttp/router v1.5.4
 	github.com/google/uuid v1.6.0
+	github.com/joho/godotenv v1.5.1
 	github.com/maximhq/bifrost/core v1.1.10
 	github.com/maximhq/bifrost/transports v1.1.12
 	github.com/valyala/fasthttp v1.64.0

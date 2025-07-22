@@ -213,7 +213,7 @@ func (h *WebAuthHandler) callbackHandler(ctx *fasthttp.RequestCtx) {
 
 	// Set session cookie
 	cookie := &fasthttp.Cookie{}
-	cookie.SetKey("session_id")
+	cookie.SetKey("session")
 	cookie.SetValue(sessionID)
 	cookie.SetHTTPOnly(true)
 	cookie.SetSecure(false) // Set to true in production with HTTPS
@@ -228,7 +228,7 @@ func (h *WebAuthHandler) callbackHandler(ctx *fasthttp.RequestCtx) {
 
 // statusHandler returns the authentication status
 func (h *WebAuthHandler) statusHandler(ctx *fasthttp.RequestCtx) {
-	sessionID := string(ctx.Request.Header.Cookie("session_id"))
+	sessionID := string(ctx.Request.Header.Cookie("session"))
 	if sessionID == "" {
 		ctx.SetContentType("application/json")
 		ctx.SetBody([]byte(`{"authenticated": false}`))
@@ -260,7 +260,7 @@ func (h *WebAuthHandler) statusHandler(ctx *fasthttp.RequestCtx) {
 
 // logoutHandler handles logout
 func (h *WebAuthHandler) logoutHandler(ctx *fasthttp.RequestCtx) {
-	sessionID := string(ctx.Request.Header.Cookie("session_id"))
+	sessionID := string(ctx.Request.Header.Cookie("session"))
 	if sessionID != "" {
 		// Delete session from database
 		h.db.Where("id = ?", sessionID).Delete(&models.Session{})
@@ -268,7 +268,7 @@ func (h *WebAuthHandler) logoutHandler(ctx *fasthttp.RequestCtx) {
 
 	// Clear session cookie
 	cookie := &fasthttp.Cookie{}
-	cookie.SetKey("session_id")
+	cookie.SetKey("session")
 	cookie.SetValue("")
 	cookie.SetMaxAge(-1) // Delete cookie
 	cookie.SetPath("/")

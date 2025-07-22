@@ -181,6 +181,33 @@ func (m *AuthMiddleware) validateJWTAndGetUserID(ctx *fasthttp.RequestCtx) (uuid
 	return user.ID, nil
 }
 
+// validateSessionAndGetUserID validates session cookie and returns user ID
+func (m *AuthMiddleware) validateSessionAndGetUserID(ctx *fasthttp.RequestCtx) (uuid.UUID, error) {
+	// Extract session cookie
+	sessionCookie := ctx.Request.Header.Cookie("session")
+	if len(sessionCookie) == 0 {
+		return uuid.Nil, fmt.Errorf("missing session cookie")
+	}
+	
+	sessionID := string(sessionCookie)
+	
+	// Find session in database
+	session := &models.Session{}
+	err := m.db.Where("id = ? AND expires_at > NOW()", sessionID).First(session).Error
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("invalid or expired session: %w", err)
+	}
+	
+	// Get user
+	user := &models.User{}
+	err = m.db.Where("id = ?", session.UserID).First(user).Error
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("user not found for session: %w", err)
+	}
+	
+	return user.ID, nil
+}
+
 // Handler creates a FastHTTP middleware handler
 func (m *AuthMiddleware) Handler(next fasthttp.RequestHandler) fasthttp.RequestHandler {
 	return func(ctx *fasthttp.RequestCtx) {
@@ -193,14 +220,19 @@ func (m *AuthMiddleware) Handler(next fasthttp.RequestHandler) fasthttp.RequestH
 			return
 		}
 		
-		// Route is protected, validate JWT
+		// Route is protected, try JWT first, then session fallback
 		userID, err := m.validateJWTAndGetUserID(ctx)
 		if err != nil {
-			log.Printf("Authentication failed for path %s: %v", path, err)
-			ctx.SetStatusCode(fasthttp.StatusUnauthorized)
-			ctx.SetBodyString(`{"error":"Authentication required"}`)
-			ctx.SetContentType("application/json")
-			return
+			// JWT failed, try session-based authentication
+			sessionUserID, sessionErr := m.validateSessionAndGetUserID(ctx)
+			if sessionErr != nil {
+				log.Printf("Authentication failed for path %s: JWT=%v, Session=%v", path, err, sessionErr)
+				ctx.SetStatusCode(fasthttp.StatusUnauthorized)
+				ctx.SetBodyString(`{"error":"Authentication required"}`)
+				ctx.SetContentType("application/json")
+				return
+			}
+			userID = sessionUserID
 		}
 		
 		// Authentication successful, inject user context

@@ -1,38 +1,35 @@
-package logging
+package handlers
 
 import (
 	"encoding/json"
-	"log"
 
+	"bifrost-gov/internal/logger"
 	"github.com/fasthttp/router"
 	"github.com/google/uuid"
 	"github.com/valyala/fasthttp"
-	"gorm.io/gorm"
 )
 
-// LoggingHandler handles logging-related HTTP routes
+// LoggingHandler handles logging-related HTTP routes using the PostgreSQL logger
 type LoggingHandler struct {
-	plugin *SecureLoggingPlugin
-	db     *gorm.DB
+	logger *logger.PostgresLogger
+}
+
+// UserMetricsResponse represents the response format for user metrics
+type UserMetricsResponse struct {
+	RecentCalls []logger.LogEntry `json:"recent_calls"`
+	TotalCalls  int64             `json:"total_calls"`
 }
 
 // NewLoggingHandler creates a new logging handler
-func NewLoggingHandler(db *gorm.DB) *LoggingHandler {
+func NewLoggingHandler(postgresLogger *logger.PostgresLogger) *LoggingHandler {
 	return &LoggingHandler{
-		plugin: NewSecureLoggingPlugin(db),
-		db:     db,
+		logger: postgresLogger,
 	}
 }
 
 // RegisterRoutes registers all logging-related routes
 func (h *LoggingHandler) RegisterRoutes(r *router.Router) {
 	r.GET("/metrics", h.metricsHandler)
-}
-
-// UserMetricsResponse represents the metrics response for a user
-type UserMetricsResponse struct {
-	RecentCalls []LogEntry `json:"recent_calls"`
-	TotalCalls  int        `json:"total_calls"`
 }
 
 // metricsHandler returns metrics for the authenticated user
@@ -53,21 +50,24 @@ func (h *LoggingHandler) metricsHandler(ctx *fasthttp.RequestCtx) {
 	}
 
 	// Get recent calls for this user
-	recentCalls, err := h.plugin.GetRecentCallsForUser(userID, 10)
+	recentCalls, err := h.logger.GetRecentCallsForUser(userID, 10)
 	if err != nil {
 		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
-		ctx.SetBodyString(`{"error": "Failed to fetch metrics"}`)
-		log.Printf("Error fetching metrics for user %s: %v", userID, err)
+		ctx.SetBodyString(`{"error": "Failed to fetch recent calls"}`)
 		return
 	}
 
 	// Count total calls for this user
-	var totalCalls int64
-	h.db.Model(&LogEntry{}).Where("user_id = ?", userID).Count(&totalCalls)
+	totalCalls, err := h.logger.GetTotalCallsForUser(userID)
+	if err != nil {
+		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
+		ctx.SetBodyString(`{"error": "Failed to fetch total calls"}`)
+		return
+	}
 
 	response := UserMetricsResponse{
 		RecentCalls: recentCalls,
-		TotalCalls:  int(totalCalls),
+		TotalCalls:  totalCalls,
 	}
 
 	ctx.SetContentType("application/json")

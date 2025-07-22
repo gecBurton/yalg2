@@ -51,8 +51,10 @@ package main
 
 import (
 	// "embed"
+	"encoding/json"
 	"flag"
 	"log"
+	"time"
 
 	"mime"
 	"os"
@@ -64,11 +66,13 @@ import (
 
 	"bifrost-gov/internal/database"
 	webHandlers "bifrost-gov/internal/handlers"
+	"bifrost-gov/internal/logger"
 	"bifrost-gov/internal/middleware"
-	"bifrost-gov/plugins/logging"
 	"bifrost-gov/plugins/ratelimit"
 
 	"github.com/fasthttp/router"
+	"github.com/google/uuid"
+	"github.com/joho/godotenv"
 	bifrost "github.com/maximhq/bifrost/core"
 	schemas "github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/bifrost-http/handlers"
@@ -92,6 +96,106 @@ type accountWrapper struct {
 func (a *accountWrapper) GetKeysForProvider(ctx *context.Context, providerKey schemas.ModelProvider) ([]schemas.Key, error) {
 	// Call the underlying method without context since BaseAccount doesn't support it yet
 	return a.BaseAccount.GetKeysForProvider(providerKey)
+}
+
+// LoggedCompletionHandler wraps the Bifrost completion handler to log all API requests
+type LoggedCompletionHandler struct {
+	handler *handlers.CompletionHandler
+	logger  *logger.PostgresLogger
+}
+
+// RegisterRoutes registers completion routes with logging
+func (l *LoggedCompletionHandler) RegisterRoutes(r *router.Router) {
+	// Register chat completions with logging wrapper
+	r.POST("/v1/chat/completions", l.handleChatCompletions)
+	r.POST("/v1/text/completions", l.handleTextCompletions)
+}
+
+// handleChatCompletions wraps chat completion requests with logging
+func (l *LoggedCompletionHandler) handleChatCompletions(ctx *fasthttp.RequestCtx) {
+	l.logAndCallOriginal(ctx, "chat", l.callOriginalChatHandler)
+}
+
+// handleTextCompletions wraps text completion requests with logging  
+func (l *LoggedCompletionHandler) handleTextCompletions(ctx *fasthttp.RequestCtx) {
+	l.logAndCallOriginal(ctx, "completion", l.callOriginalTextHandler)
+}
+
+// callOriginalChatHandler calls the original Bifrost chat handler
+func (l *LoggedCompletionHandler) callOriginalChatHandler(ctx *fasthttp.RequestCtx) {
+	// Create a temporary router to get the original handler
+	tempRouter := router.New()
+	l.handler.RegisterRoutes(tempRouter)
+	handler, _ := tempRouter.Lookup("POST", "/v1/chat/completions", ctx)
+	if handler != nil {
+		handler(ctx)
+	}
+}
+
+// callOriginalTextHandler calls the original Bifrost text handler
+func (l *LoggedCompletionHandler) callOriginalTextHandler(ctx *fasthttp.RequestCtx) {
+	// Create a temporary router to get the original handler
+	tempRouter := router.New()
+	l.handler.RegisterRoutes(tempRouter)
+	handler, _ := tempRouter.Lookup("POST", "/v1/text/completions", ctx)
+	if handler != nil {
+		handler(ctx)
+	}
+}
+
+// logAndCallOriginal logs the request and calls the original handler
+func (l *LoggedCompletionHandler) logAndCallOriginal(ctx *fasthttp.RequestCtx, requestType string, originalHandler func(*fasthttp.RequestCtx)) {
+	startTime := time.Now()
+	
+	// Extract user ID from auth middleware
+	userID := uuid.Nil
+	if userIDValue := ctx.UserValue("user_id"); userIDValue != nil {
+		if uid, ok := userIDValue.(uuid.UUID); ok {
+			userID = uid
+		}
+	}
+	
+	// Parse request to extract model info
+	var requestBody map[string]interface{}
+	model := "unknown"
+	provider := "unknown"
+	
+	if err := json.Unmarshal(ctx.PostBody(), &requestBody); err == nil {
+		if modelStr, ok := requestBody["model"].(string); ok {
+			model = modelStr
+			if parts := strings.Split(modelStr, "/"); len(parts) >= 2 {
+				provider = parts[0]
+				model = parts[1]
+			}
+		}
+	}
+	
+	// Call the original handler first
+	originalHandler(ctx)
+	
+	// Extract response info for logging
+	statusCode := ctx.Response.StatusCode()
+	responseBody := string(ctx.Response.Body())
+	
+	// Extract error message from response if it's an error
+	errorMessage := ""
+	if statusCode >= 400 && responseBody != "" {
+		var respMap map[string]interface{}
+		if err := json.Unmarshal([]byte(responseBody), &respMap); err == nil {
+			if errMsg, ok := respMap["error"].(string); ok {
+				errorMessage = errMsg
+			} else if errMap, ok := respMap["error"].(map[string]interface{}); ok {
+				if msg, ok := errMap["message"].(string); ok {
+					errorMessage = msg
+				}
+			}
+		}
+	}
+	
+	// Log the request with actual response data
+	responseTime := int(time.Since(startTime).Milliseconds())
+	tokensUsed := 0 // TODO: Extract from successful responses
+	l.logger.LogAPIRequest(userID, requestType, model, provider, statusCode, errorMessage, responseTime, tokensUsed)
 }
 
 // init initializes command line flags and validates required configuration.
@@ -208,17 +312,26 @@ func uiHandler(ctx *fasthttp.RequestCtx) {
 
 // main is the entry point of the application.
 // It:
-// 1. Initializes Prometheus collectors for monitoring
-// 2. Reads and parses configuration from the specified config file
-// 3. Initializes the Bifrost client with the configuration
-// 4. Sets up HTTP routes for text and chat completions
-// 5. Starts the HTTP server on the specified port
+// 1. Loads environment variables from .env file
+// 2. Initializes Prometheus collectors for monitoring
+// 3. Reads and parses configuration from the specified config file
+// 4. Initializes the Bifrost client with the configuration
+// 5. Sets up HTTP routes for text and chat completions
+// 6. Starts the HTTP server on the specified port
 //
 // The server exposes the following endpoints:
 //   - POST /v1/text/completions: For text completion requests
 //   - POST /v1/chat/completions: For chat completion requests
 //   - GET /metrics: For Prometheus metrics
 func main() {
+	// Load environment variables from .env file
+	if err := godotenv.Load(); err != nil {
+		log.Printf("Warning: Error loading .env file: %v", err)
+		log.Printf("Continuing with existing environment variables...")
+	} else {
+		log.Println("Successfully loaded environment variables from .env file")
+	}
+
 	// Ensure app directory exists
 	if err := os.MkdirAll(appDir, 0755); err != nil {
 		log.Fatalf("failed to create app directory %s: %v", appDir, err)
@@ -227,10 +340,9 @@ func main() {
 	// Derive paths from app-dir
 	configPath := filepath.Join(appDir, "config.json")
 
-	logger := bifrost.NewDefaultLogger(schemas.LogLevelInfo)
-
-	// Initialize high-performance configuration store with caching
-	store, err := lib.NewConfigStore(logger)
+	// Initialize high-performance configuration store with caching  
+	tempLogger := bifrost.NewDefaultLogger(schemas.LogLevelInfo)
+	store, err := lib.NewConfigStore(tempLogger)
 	if err != nil {
 		log.Fatalf("failed to initialize config store: %v", err)
 	}
@@ -267,15 +379,17 @@ func main() {
 	}
 	log.Println("Authentication middleware initialized")
 
+	// Create custom PostgreSQL logger
+	postgresLogger, err := logger.NewPostgresLogger(sharedDB, schemas.LogLevelInfo)
+	if err != nil {
+		log.Fatalf("Failed to create PostgreSQL logger: %v", err)
+	}
+	log.Println("PostgreSQL logger initialized")
+
 	// Initialize rate limiting plugin with shared database
 	rateLimitPlugin := ratelimit.NewRateLimitPlugin(sharedDB)
 	loadedPlugins = append(loadedPlugins, rateLimitPlugin)
 	log.Println("Rate limiting plugin initialized with PostgreSQL")
-
-	// Initialize secure logging plugin with shared database
-	secureLoggingPlugin := logging.NewSecureLoggingPlugin(sharedDB)
-	loadedPlugins = append(loadedPlugins, secureLoggingPlugin)
-	log.Println("Secure logging plugin initialized with PostgreSQL")
 
 	client, err := bifrost.Init(schemas.BifrostConfig{
 		Account:            account,
@@ -283,7 +397,7 @@ func main() {
 		DropExcessRequests: store.ClientConfig.DropExcessRequests,
 		Plugins:            loadedPlugins,
 		MCPConfig:          store.MCPConfig,
-		Logger:             logger,
+		Logger:             postgresLogger,
 	})
 	if err != nil {
 		log.Fatalf("failed to initialize bifrost: %v", err)
@@ -292,15 +406,21 @@ func main() {
 	store.SetBifrostClient(client)
 
 	// Initialize handlers
-	providerHandler := handlers.NewProviderHandler(store, client, logger)
+	providerHandler := handlers.NewProviderHandler(store, client, postgresLogger)
 
 	// Create standard completion handler (auth will be handled by middleware)
-	completionHandler := handlers.NewCompletionHandler(client, logger)
+	completionHandler := handlers.NewCompletionHandler(client, postgresLogger)
 	log.Println("Using standard completion handler with auth middleware")
+	
+	// Wrap completion handler with API request logging
+	loggedCompletionHandler := &LoggedCompletionHandler{
+		handler: completionHandler,
+		logger:  postgresLogger,
+	}
 
-	mcpHandler := handlers.NewMCPHandler(client, logger, store)
+	mcpHandler := handlers.NewMCPHandler(client, postgresLogger, store)
 	integrationHandler := handlers.NewIntegrationHandler(client)
-	configHandler := handlers.NewConfigHandler(client, logger, store, configPath)
+	configHandler := handlers.NewConfigHandler(client, postgresLogger, store, configPath)
 
 	// Create web auth handler with shared database
 	webAuthHandler, err := webHandlers.NewWebAuthHandler(store, sharedDB)
@@ -309,9 +429,9 @@ func main() {
 	}
 	log.Println("Web auth handler configured with shared database access")
 
-	// Create logging handler with shared database
-	loggingHandler := logging.NewLoggingHandler(sharedDB)
-	log.Println("Logging handler configured with shared database access")
+	// Create logging handler with PostgreSQL logger
+	loggingHandler := webHandlers.NewLoggingHandler(postgresLogger)
+	log.Println("Logging handler configured with PostgreSQL logger")
 
 	// Note: WebSocket logging handlers removed in favor of secure PostgreSQL logging
 
@@ -319,7 +439,7 @@ func main() {
 
 	// Register all handler routes FIRST (API routes take precedence)
 	providerHandler.RegisterRoutes(r)
-	completionHandler.RegisterRoutes(r)
+	loggedCompletionHandler.RegisterRoutes(r)
 	mcpHandler.RegisterRoutes(r)
 	integrationHandler.RegisterRoutes(r)
 	configHandler.RegisterRoutes(r)
@@ -338,7 +458,7 @@ func main() {
 	r.GET("/static/{filepath:*}", uiHandler)
 
 	r.NotFound = func(ctx *fasthttp.RequestCtx) {
-		handlers.SendError(ctx, fasthttp.StatusNotFound, "Route not found: "+string(ctx.Path()), logger)
+		handlers.SendError(ctx, fasthttp.StatusNotFound, "Route not found: "+string(ctx.Path()), postgresLogger)
 	}
 
 	// Apply CORS middleware to all routes
