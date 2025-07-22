@@ -98,55 +98,49 @@ func (a *accountWrapper) GetKeysForProvider(ctx *context.Context, providerKey sc
 	return a.BaseAccount.GetKeysForProvider(providerKey)
 }
 
-// LoggedCompletionHandler wraps the Bifrost completion handler to log all API requests
+// LoggedCompletionHandler wraps Bifrost handlers with PostgreSQL logging
 type LoggedCompletionHandler struct {
 	handler *handlers.CompletionHandler
 	logger  *logger.PostgresLogger
 }
 
-// RegisterRoutes registers completion routes with logging
+// RegisterRoutes wraps the original handler routes with logging
 func (l *LoggedCompletionHandler) RegisterRoutes(r *router.Router) {
-	// Register chat completions with logging wrapper
-	r.POST("/v1/chat/completions", l.handleChatCompletions)
-	r.POST("/v1/text/completions", l.handleTextCompletions)
-}
-
-// handleChatCompletions wraps chat completion requests with logging
-func (l *LoggedCompletionHandler) handleChatCompletions(ctx *fasthttp.RequestCtx) {
-	l.logAndCallOriginal(ctx, "chat", l.callOriginalChatHandler)
-}
-
-// handleTextCompletions wraps text completion requests with logging  
-func (l *LoggedCompletionHandler) handleTextCompletions(ctx *fasthttp.RequestCtx) {
-	l.logAndCallOriginal(ctx, "completion", l.callOriginalTextHandler)
-}
-
-// callOriginalChatHandler calls the original Bifrost chat handler
-func (l *LoggedCompletionHandler) callOriginalChatHandler(ctx *fasthttp.RequestCtx) {
-	// Create a temporary router to get the original handler
+	// Get the original routes by registering to a temporary router
 	tempRouter := router.New()
 	l.handler.RegisterRoutes(tempRouter)
-	handler, _ := tempRouter.Lookup("POST", "/v1/chat/completions", ctx)
-	if handler != nil {
-		handler(ctx)
-	}
-}
-
-// callOriginalTextHandler calls the original Bifrost text handler
-func (l *LoggedCompletionHandler) callOriginalTextHandler(ctx *fasthttp.RequestCtx) {
-	// Create a temporary router to get the original handler
-	tempRouter := router.New()
-	l.handler.RegisterRoutes(tempRouter)
-	handler, _ := tempRouter.Lookup("POST", "/v1/text/completions", ctx)
-	if handler != nil {
-		handler(ctx)
-	}
-}
-
-// logAndCallOriginal logs the request and calls the original handler
-func (l *LoggedCompletionHandler) logAndCallOriginal(ctx *fasthttp.RequestCtx, requestType string, originalHandler func(*fasthttp.RequestCtx)) {
-	startTime := time.Now()
 	
+	// Wrap the handlers with logging
+	r.POST("/v1/chat/completions", l.wrapWithLogging(tempRouter, "/v1/chat/completions", "chat"))
+	r.POST("/v1/text/completions", l.wrapWithLogging(tempRouter, "/v1/text/completions", "completion"))
+}
+
+// wrapWithLogging creates a logging wrapper for any handler
+func (l *LoggedCompletionHandler) wrapWithLogging(tempRouter *router.Router, path, requestType string) fasthttp.RequestHandler {
+	// Get the original handler
+	originalHandler, _ := tempRouter.Lookup("POST", path, nil)
+	
+	return func(ctx *fasthttp.RequestCtx) {
+		startTime := time.Now()
+		
+		// Extract request info for logging
+		userID, model, provider := l.extractRequestInfo(ctx)
+		
+		// Call original handler
+		originalHandler(ctx)
+		
+		// Extract response info and log
+		statusCode := ctx.Response.StatusCode()
+		errorMessage := l.extractErrorMessage(ctx.Response.Body())
+		responseTime := int(time.Since(startTime).Milliseconds())
+		
+		// Log the request
+		l.logger.LogAPIRequest(userID, requestType, model, provider, statusCode, errorMessage, responseTime, 0)
+	}
+}
+
+// extractRequestInfo extracts user ID and model info from request
+func (l *LoggedCompletionHandler) extractRequestInfo(ctx *fasthttp.RequestCtx) (uuid.UUID, string, string) {
 	// Extract user ID from auth middleware
 	userID := uuid.Nil
 	if userIDValue := ctx.UserValue("user_id"); userIDValue != nil {
@@ -155,47 +149,40 @@ func (l *LoggedCompletionHandler) logAndCallOriginal(ctx *fasthttp.RequestCtx, r
 		}
 	}
 	
-	// Parse request to extract model info
+	// Parse model from request body
+	model, provider := "unknown", "unknown"
 	var requestBody map[string]interface{}
-	model := "unknown"
-	provider := "unknown"
-	
 	if err := json.Unmarshal(ctx.PostBody(), &requestBody); err == nil {
 		if modelStr, ok := requestBody["model"].(string); ok {
-			model = modelStr
 			if parts := strings.Split(modelStr, "/"); len(parts) >= 2 {
-				provider = parts[0]
-				model = parts[1]
+				provider, model = parts[0], parts[1]
+			} else {
+				model = modelStr
 			}
 		}
 	}
 	
-	// Call the original handler first
-	originalHandler(ctx)
+	return userID, model, provider
+}
+
+// extractErrorMessage extracts error message from response body
+func (l *LoggedCompletionHandler) extractErrorMessage(responseBody []byte) string {
+	if len(responseBody) == 0 {
+		return ""
+	}
 	
-	// Extract response info for logging
-	statusCode := ctx.Response.StatusCode()
-	responseBody := string(ctx.Response.Body())
-	
-	// Extract error message from response if it's an error
-	errorMessage := ""
-	if statusCode >= 400 && responseBody != "" {
-		var respMap map[string]interface{}
-		if err := json.Unmarshal([]byte(responseBody), &respMap); err == nil {
-			if errMsg, ok := respMap["error"].(string); ok {
-				errorMessage = errMsg
-			} else if errMap, ok := respMap["error"].(map[string]interface{}); ok {
-				if msg, ok := errMap["message"].(string); ok {
-					errorMessage = msg
-				}
+	var respMap map[string]interface{}
+	if err := json.Unmarshal(responseBody, &respMap); err == nil {
+		if errMsg, ok := respMap["error"].(string); ok {
+			return errMsg
+		}
+		if errMap, ok := respMap["error"].(map[string]interface{}); ok {
+			if msg, ok := errMap["message"].(string); ok {
+				return msg
 			}
 		}
 	}
-	
-	// Log the request with actual response data
-	responseTime := int(time.Since(startTime).Milliseconds())
-	tokensUsed := 0 // TODO: Extract from successful responses
-	l.logger.LogAPIRequest(userID, requestType, model, provider, statusCode, errorMessage, responseTime, tokensUsed)
+	return ""
 }
 
 // init initializes command line flags and validates required configuration.
