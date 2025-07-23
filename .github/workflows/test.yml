@@ -13,11 +13,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Start services with docker compose
-      run: |
-        docker compose up -d
-        sleep 10
-    
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
@@ -34,27 +29,10 @@ jobs:
     - name: Install dependencies
       run: go mod download
         
-    - name: Run all tests
-      env:
-        DATABASE_URL: "postgres://bifrost:bifrost123@localhost:5432/bifrost?sslmode=disable"
-      run: go test -v -race -coverprofile=coverage.out ./...
-    
-    - name: Check coverage
+    - name: Start services and run tests
       run: |
-        go tool cover -func=coverage.out
-        COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
-        echo "Coverage: ${COVERAGE}%"
-        
-        # Fail if coverage is below 60%
-        if (( $(echo "$COVERAGE < 60" | bc -l) )); then
-          echo "Coverage ${COVERAGE}% is below minimum 60%"
-          exit 1
-        fi
+        make start-services
+        make test
     
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
-      with:
-        file: ./coverage.out
-        flags: unittests
-        name: codecov-umbrella
-        fail_ci_if_error: false
+    - name: Stop services
+      run: make stop-services
