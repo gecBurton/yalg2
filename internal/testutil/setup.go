@@ -22,23 +22,30 @@ func SetupTestDB(t *testing.T, models ...interface{}) *gorm.DB {
 		t.Skipf("Failed to connect to test database (PostgreSQL may not be running): %v", err)
 	}
 
-	// Clean all tables
-	CleanDatabase(db)
-
-	// Auto-migrate provided models
+	// Auto-migrate provided models first to ensure tables exist
 	if len(models) > 0 {
 		if err := db.AutoMigrate(models...); err != nil {
 			t.Fatalf("Failed to migrate test database: %v", err)
 		}
 	}
 
+	// Clean all tables after migration
+	CleanDatabase(db)
+
 	return db
 }
 
 // CleanDatabase truncates all tables to ensure clean test state
 func CleanDatabase(db *gorm.DB) {
-	// Clean up existing data (ignore errors if tables don't exist)
-	db.Exec("TRUNCATE TABLE log_entries CASCADE")
-	db.Exec("TRUNCATE TABLE sessions CASCADE")
-	db.Exec("TRUNCATE TABLE users CASCADE")
+	// Clean up existing data only if tables exist
+	tables := []string{"log_entries", "sessions", "users"}
+	
+	for _, table := range tables {
+		// Check if table exists before truncating
+		var exists bool
+		db.Raw("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = ?)", table).Scan(&exists)
+		if exists {
+			db.Exec("TRUNCATE TABLE " + table + " CASCADE")
+		}
+	}
 }
