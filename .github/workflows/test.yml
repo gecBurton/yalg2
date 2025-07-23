@@ -31,6 +31,7 @@ jobs:
         
     - name: Start services and run tests
       run: |
+        make clean
         make start-services
         make test
     

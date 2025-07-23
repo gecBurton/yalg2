@@ -27,11 +27,12 @@ start-services:
 	@echo "Waiting for services to be ready..."
 	@sleep 5
 	@echo "Services started. PostgreSQL on :5432, Dex on :5556"
+	docker ps
 
 # Stop services
 stop-services:
 	@echo "Stopping services..."
-	docker- ompose down
+	docker compose down
 
 # Run: start services and run bifrost locally
 run: start-services build
