@@ -13,9 +13,9 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Start services with docker-compose
+    - name: Start services with docker compose
       run: |
-        docker-compose up -d
+        docker compose up -d
         sleep 10
     
     - name: Set up Go

@@ -1,4 +1,4 @@
-.PHONY: build run start-services stop-services clean test help
+.PHONY: build run start-services stop-services clean test lint lint-fix help
 
 # Default target
 help:
@@ -9,6 +9,8 @@ help:
 	@echo "  stop-services  - Stop PostgreSQL and Dex services"
 	@echo "  clean          - Stop services and clean up"
 	@echo "  test           - Run tests"
+	@echo "  lint           - Run golangci-lint"
+	@echo "  lint-fix       - Run golangci-lint with auto-fix"
 	@echo "  help           - Show this help message"
 
 # Build the bifrost binary
@@ -52,3 +54,15 @@ clean: stop-services
 test:
 	@echo "Running tests..."
 	go test ./...
+
+# Run linter
+lint:
+	@echo "Running golangci-lint..."
+	@which golangci-lint > /dev/null || (echo "golangci-lint not found. Install with: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest" && exit 1)
+	golangci-lint run --timeout=5m
+
+# Run linter with auto-fix
+lint-fix:
+	@echo "Running golangci-lint with auto-fix..."
+	@which golangci-lint > /dev/null || (echo "golangci-lint not found. Install with: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest" && exit 1)
+	golangci-lint run --fix --timeout=5m
