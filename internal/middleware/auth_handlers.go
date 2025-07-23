@@ -1,7 +1,6 @@
-package handlers
+package middleware
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -9,58 +8,84 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"bifrost-gov/internal/database"
 
-	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/fasthttp/router"
-	"github.com/google/uuid"
 	"github.com/maximhq/bifrost/transports/bifrost-http/lib"
 	"github.com/valyala/fasthttp"
-	"gorm.io/gorm"
 )
+
+// AuthConfig defines which routes require authentication
+type AuthConfig struct {
+	// Routes that require authentication (supports wildcards)
+	ProtectedRoutes []string
+	// Routes that are always public (supports wildcards)
+	PublicRoutes []string
+	// Pre-computed exact route lookups for performance
+	ExactPublic    map[string]bool
+	ExactProtected map[string]bool
+}
 
 // WebAuthHandler handles web-based authentication routes (login/logout/callback)
 type WebAuthHandler struct {
-	store    *lib.ConfigStore
-	db       *gorm.DB
-	verifier *oidc.IDTokenVerifier
+	store   *lib.ConfigStore
+	service *AuthService
+}
+
+// AuthMiddleware handles JWT authentication for protected routes
+type AuthMiddleware struct {
+	config  *AuthConfig
+	service *AuthService
 }
 
 // NewWebAuthHandler creates a new web authentication handler
-func NewWebAuthHandler(store *lib.ConfigStore, db *gorm.DB) (*WebAuthHandler, error) {
-	// Auto-migrate models
-	if err := db.AutoMigrate(&database.User{}, &database.Session{}); err != nil {
-		return nil, fmt.Errorf("failed to migrate auth models: %w", err)
-	}
-
-	// Create OIDC provider
-	ctx := context.Background()
-	provider, err := oidc.NewProvider(ctx, "http://localhost:5556")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create OIDC provider: %w", err)
-	}
-
-	// Create ID token verifier
-	verifierConfig := &oidc.Config{
-		ClientID: "bifrost-client",
-	}
-	verifier := provider.Verifier(verifierConfig)
-
+func NewWebAuthHandler(store *lib.ConfigStore, service *AuthService) *WebAuthHandler {
 	return &WebAuthHandler{
-		store:    store,
-		db:       db,
-		verifier: verifier,
-	}, nil
+		store:   store,
+		service: service,
+	}
 }
 
-// RegisterRoutes registers all web authentication routes
-func (h *WebAuthHandler) RegisterRoutes(r *router.Router) {
-	r.GET("/auth/login", h.loginHandler)
-	r.GET("/callback", h.callbackHandler)
-	r.GET("/auth/status", h.statusHandler)
-	r.POST("/auth/logout", h.logoutHandler)
+// NewAuthMiddleware creates a new authentication middleware
+func NewAuthMiddleware(config *AuthConfig, service *AuthService) *AuthMiddleware {
+	return &AuthMiddleware{
+		config:  config,
+		service: service,
+	}
+}
+
+// DefaultAuthConfig returns a sensible default configuration
+func DefaultAuthConfig() *AuthConfig {
+	config := &AuthConfig{
+		ProtectedRoutes: []string{
+			"/v1/*",    // All API endpoints
+			"/metrics", // Metrics endpoint (user-specific)
+			"/api/*",   // Internal API endpoints
+		},
+		PublicRoutes: []string{
+			"/auth/*",   // Authentication flows
+			"/",         // UI root
+			"/ui/*",     // UI assets
+			"/app/*",    // UI routes
+			"/static/*", // Static assets
+		},
+		ExactPublic:    make(map[string]bool),
+		ExactProtected: make(map[string]bool),
+	}
+	
+	// Pre-compute exact matches for performance
+	config.ExactPublic["/"] = true
+	config.ExactPublic["/auth/login"] = true
+	config.ExactPublic["/auth/logout"] = true
+	config.ExactPublic["/auth/status"] = true
+	config.ExactPublic["/callback"] = true
+	
+	config.ExactProtected["/metrics"] = true
+	
+	return config
 }
 
 // generateSessionID creates a secure random session ID
@@ -72,17 +97,42 @@ func generateSessionID() (string, error) {
 	return base64.URLEncoding.EncodeToString(bytes), nil
 }
 
+// matchesPattern checks if a path matches a pattern (supports wildcards)
+func matchesPattern(path, pattern string) bool {
+	if pattern == path {
+		return true
+	}
+
+	// Handle wildcard patterns
+	if strings.HasSuffix(pattern, "*") {
+		prefix := strings.TrimSuffix(pattern, "*")
+		return strings.HasPrefix(path, prefix)
+	}
+
+	return false
+}
+
+// RegisterRoutes registers all web authentication routes
+func (h *WebAuthHandler) RegisterRoutes(r *router.Router) {
+	r.GET("/auth/login", h.loginHandler)
+	r.GET("/callback", h.callbackHandler)
+	r.GET("/auth/status", h.statusHandler)
+	r.POST("/auth/logout", h.logoutHandler)
+}
+
 // loginHandler redirects to OIDC provider for authentication
 func (h *WebAuthHandler) loginHandler(ctx *fasthttp.RequestCtx) {
+	config := h.service.GetConfig()
+	
 	// Build OIDC authorization URL
 	params := url.Values{}
-	params.Set("client_id", "bifrost-client")
+	params.Set("client_id", config.ClientID)
 	params.Set("response_type", "code")
-	params.Set("redirect_uri", "http://localhost:8080/callback")
+	params.Set("redirect_uri", config.RedirectURI)
 	params.Set("scope", "openid email profile")
 	params.Set("state", "random-state") // TODO: Use secure random state in production
 
-	authURL := fmt.Sprintf("http://localhost:5556/auth?%s", params.Encode())
+	authURL := fmt.Sprintf("%s/auth?%s", config.IssuerURL, params.Encode())
 
 	ctx.Response.Header.Set("Location", authURL)
 	ctx.SetStatusCode(fasthttp.StatusFound)
@@ -98,14 +148,16 @@ func (h *WebAuthHandler) callbackHandler(ctx *fasthttp.RequestCtx) {
 		return
 	}
 
+	config := h.service.GetConfig()
+
 	// Exchange code for tokens
-	tokenURL := "http://localhost:5556/token"
+	tokenURL := fmt.Sprintf("%s/token", config.IssuerURL)
 	data := url.Values{}
 	data.Set("grant_type", "authorization_code")
-	data.Set("client_id", "bifrost-client")
-	data.Set("client_secret", "bifrost-secret")
+	data.Set("client_id", config.ClientID)
+	data.Set("client_secret", config.ClientSecret)
 	data.Set("code", code)
-	data.Set("redirect_uri", "http://localhost:8080/callback")
+	data.Set("redirect_uri", config.RedirectURI)
 
 	// Make token request
 	resp, err := http.PostForm(tokenURL, data)
@@ -135,21 +187,12 @@ func (h *WebAuthHandler) callbackHandler(ctx *fasthttp.RequestCtx) {
 		return
 	}
 
-	// Verify the ID token
-	tokenCtx := context.Background()
-	idToken, err := h.verifier.Verify(tokenCtx, tokenResp.IDToken)
+	// Verify the ID token and get claims
+	claims, err := h.service.VerifyIDToken(tokenResp.IDToken)
 	if err != nil {
 		log.Printf("Failed to verify ID token: %v", err)
 		ctx.SetStatusCode(fasthttp.StatusUnauthorized)
 		ctx.SetBodyString("Invalid ID token")
-		return
-	}
-
-	// Extract claims
-	var claims map[string]any
-	if err := idToken.Claims(&claims); err != nil {
-		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
-		ctx.SetBodyString("Failed to parse token claims")
 		return
 	}
 
@@ -162,34 +205,15 @@ func (h *WebAuthHandler) callbackHandler(ctx *fasthttp.RequestCtx) {
 	}
 
 	// Find or create user
-	user := &database.User{}
-	err = h.db.Where("sub = ?", sub).First(user).Error
+	user, err := h.service.FindOrCreateUser(sub, claims)
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			// Create new user
-			email, _ := claims["email"].(string)
-			name, _ := claims["name"].(string)
-
-			user = &database.User{
-				ID:    uuid.New(),
-				Sub:   sub,
-				Email: email,
-				Name:  name,
-			}
-
-			if err := h.db.Create(user).Error; err != nil {
-				ctx.SetStatusCode(fasthttp.StatusInternalServerError)
-				ctx.SetBodyString("Failed to create user")
-				return
-			}
-
-			log.Printf("Created new user via web login: %s (%s)", user.Email, user.ID)
-		} else {
-			ctx.SetStatusCode(fasthttp.StatusInternalServerError)
-			ctx.SetBodyString("Database error")
-			return
-		}
+		log.Printf("Failed to find/create user: %v", err)
+		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
+		ctx.SetBodyString("Failed to process user")
+		return
 	}
+
+	log.Printf("Created new user via web login: %s (%s)", user.Email, user.ID)
 
 	// Create session
 	sessionID, err := generateSessionID()
@@ -206,7 +230,7 @@ func (h *WebAuthHandler) callbackHandler(ctx *fasthttp.RequestCtx) {
 		ExpiresAt: time.Now().Add(24 * time.Hour), // 24 hour session
 	}
 
-	if err := h.db.Create(session).Error; err != nil {
+	if err := h.service.CreateSession(session); err != nil {
 		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
 		ctx.SetBodyString("Failed to create session")
 		return
@@ -237,8 +261,7 @@ func (h *WebAuthHandler) statusHandler(ctx *fasthttp.RequestCtx) {
 	}
 
 	// Look up session
-	session := &database.Session{}
-	err := h.db.Preload("User").Where("id = ? AND expires_at > ?", sessionID, time.Now()).First(session).Error
+	session, err := h.service.FindSessionWithUser(sessionID)
 	if err != nil {
 		ctx.SetContentType("application/json")
 		ctx.SetBody([]byte(`{"authenticated": false}`))
@@ -264,7 +287,7 @@ func (h *WebAuthHandler) logoutHandler(ctx *fasthttp.RequestCtx) {
 	sessionID := string(ctx.Request.Header.Cookie("session"))
 	if sessionID != "" {
 		// Delete session from database
-		h.db.Where("id = ?", sessionID).Delete(&database.Session{})
+		h.service.DeleteSession(sessionID)
 	}
 
 	// Clear session cookie

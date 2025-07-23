@@ -14,6 +14,30 @@ import (
 	"gorm.io/gorm"
 )
 
+// Constants for configuration
+const (
+	// MAX_BODY_SIZE removed (request/response body logging disabled)
+	WORKER_COUNT          = 3
+	LOG_CHANNEL_BUFFER    = 1000
+	TOKEN_ESTIMATION_RATIO = 0.75
+)
+
+// Request type to input/output type mappings
+var (
+	requestTypeToInputType = map[string]string{
+		"chat":         "text",
+		"completion":   "text",
+		"embedding":    "text",
+		"speech":       "audio",
+		"transcription": "audio",
+	}
+	
+	requestTypeToOutputType = map[string]string{
+		"speech":       "audio",
+		"transcription": "text",
+	}
+)
+
 // User represents a user in the system
 type User struct {
 	ID                   uuid.UUID      `json:"id" gorm:"type:uuid;primary_key;"`
@@ -67,9 +91,7 @@ type LogEntry struct {
 	AcceptedPredictionTokens  int `json:"accepted_prediction_tokens,omitempty"`   // Accepted prediction tokens
 	RejectedPredictionTokens  int `json:"rejected_prediction_tokens,omitempty"`   // Rejected prediction tokens
 	
-	// Request/Response Content
-	RequestBody    string `json:"request_body,omitempty" gorm:"type:text"`    // Complete request body
-	ResponseBody   string `json:"response_body,omitempty" gorm:"type:text"`   // Complete response body
+	// Request/Response Content - REMOVED for security (sensitive data)
 	
 	// Streaming Support
 	IsStreaming    bool   `json:"is_streaming" gorm:"index:idx_streaming_created,composite"`                 // Whether this was a streaming request
@@ -105,6 +127,34 @@ func putLogEntry(entry *LogEntry) {
 	entryPool.Put(entry)
 }
 
+// truncateBody function removed (request/response body logging disabled for security)
+
+// categorizeHTTPStatus categorizes HTTP status codes into error categories
+func categorizeHTTPStatus(statusCode int) string {
+	switch statusCode {
+	case 400:
+		return "client_error"
+	case 401:
+		return "auth_error"
+	case 403:
+		return "permission_error"
+	case 404:
+		return "not_found"
+	case 429:
+		return "rate_limit"
+	case 500, 502, 503, 504:
+		return "server_error"
+	default:
+		if statusCode >= 400 && statusCode < 500 {
+			return "client_error"
+		}
+		if statusCode >= 500 {
+			return "server_error"
+		}
+		return "success"
+	}
+}
+
 // PostgresLogger implements Bifrost's Logger interface and stores logs in PostgreSQL
 type PostgresLogger struct {
 	db       *gorm.DB
@@ -128,12 +178,12 @@ func NewPostgresLogger(db *gorm.DB, level schemas.LogLevel) (*PostgresLogger, er
 	logger := &PostgresLogger{
 		db:      db,
 		level:   level,
-		logChan: make(chan *LogEntry, 1000), // Buffered channel for async processing
+		logChan: make(chan *LogEntry, LOG_CHANNEL_BUFFER), // Buffered channel for async processing
 		done:    make(chan struct{}),
 	}
 
 	// Start background worker goroutines for async processing
-	for i := 0; i < 3; i++ { // 3 worker goroutines
+	for i := 0; i < WORKER_COUNT; i++ {
 		logger.wg.Add(1)
 		go logger.asyncWorker()
 	}
@@ -141,67 +191,56 @@ func NewPostgresLogger(db *gorm.DB, level schemas.LogLevel) (*PostgresLogger, er
 	return logger, nil
 }
 
+// log is the base logging method that handles level checking and routing
+func (l *PostgresLogger) log(level schemas.LogLevel, msg string, ctx *context.Context) {
+	if l.level <= level {
+		l.logEntry(level, msg, ctx)
+	}
+}
+
 // Debug logs a debug message
 func (l *PostgresLogger) Debug(msg string) {
-	if l.level <= schemas.LogLevelDebug {
-		l.logEntry(schemas.LogLevelDebug, msg, nil)
-	}
+	l.log(schemas.LogLevelDebug, msg, nil)
 }
 
 // Info logs an info message
 func (l *PostgresLogger) Info(msg string) {
-	if l.level <= schemas.LogLevelInfo {
-		l.logEntry(schemas.LogLevelInfo, msg, nil)
-	}
+	l.log(schemas.LogLevelInfo, msg, nil)
 }
 
 // Warn logs a warning message
 func (l *PostgresLogger) Warn(msg string) {
-	if l.level <= schemas.LogLevelWarn {
-		l.logEntry(schemas.LogLevelWarn, msg, nil)
-	}
+	l.log(schemas.LogLevelWarn, msg, nil)
 }
 
 // Error logs an error message (implements schemas.Logger interface)
 func (l *PostgresLogger) Error(err error) {
-	if l.level <= schemas.LogLevelError {
-		l.logEntry(schemas.LogLevelError, err.Error(), nil)
-	}
+	l.log(schemas.LogLevelError, err.Error(), nil)
 }
 
 // ErrorMsg logs an error message from string
 func (l *PostgresLogger) ErrorMsg(msg string) {
-	if l.level <= schemas.LogLevelError {
-		l.logEntry(schemas.LogLevelError, msg, nil)
-	}
+	l.log(schemas.LogLevelError, msg, nil)
 }
 
 // DebugWithContext logs a debug message with context
 func (l *PostgresLogger) DebugWithContext(ctx context.Context, msg string) {
-	if l.level <= schemas.LogLevelDebug {
-		l.logEntry(schemas.LogLevelDebug, msg, &ctx)
-	}
+	l.log(schemas.LogLevelDebug, msg, &ctx)
 }
 
 // InfoWithContext logs an info message with context
 func (l *PostgresLogger) InfoWithContext(ctx context.Context, msg string) {
-	if l.level <= schemas.LogLevelInfo {
-		l.logEntry(schemas.LogLevelInfo, msg, &ctx)
-	}
+	l.log(schemas.LogLevelInfo, msg, &ctx)
 }
 
 // WarnWithContext logs a warning message with context
 func (l *PostgresLogger) WarnWithContext(ctx context.Context, msg string) {
-	if l.level <= schemas.LogLevelWarn {
-		l.logEntry(schemas.LogLevelWarn, msg, &ctx)
-	}
+	l.log(schemas.LogLevelWarn, msg, &ctx)
 }
 
 // ErrorWithContext logs an error message with context
 func (l *PostgresLogger) ErrorWithContext(ctx context.Context, msg string) {
-	if l.level <= schemas.LogLevelError {
-		l.logEntry(schemas.LogLevelError, msg, &ctx)
-	}
+	l.log(schemas.LogLevelError, msg, &ctx)
 }
 
 // asyncWorker processes log entries asynchronously
@@ -253,78 +292,82 @@ func (l *PostgresLogger) logEntry(level schemas.LogLevel, message string, ctx *c
 
 // enrichFromContext extracts useful information from the context
 func (l *PostgresLogger) enrichFromContext(entry *LogEntry, ctx context.Context) {
-	// Extract user ID if available
+	l.extractUserAndRequest(entry, ctx)
+	l.extractTiming(entry, ctx)
+	l.extractBodies(entry, ctx)
+	l.extractStreaming(entry, ctx)
+	l.extractClientInfo(entry, ctx)
+	l.extractBifrostData(entry, ctx)
+	l.extractErrorInfo(entry, ctx)
+}
+
+// extractUserAndRequest extracts user ID and request ID from context
+func (l *PostgresLogger) extractUserAndRequest(entry *LogEntry, ctx context.Context) {
 	if userIDValue := ctx.Value("user_id"); userIDValue != nil {
 		if uid, ok := userIDValue.(uuid.UUID); ok {
 			entry.UserID = &uid
 		}
 	}
 
-	// Extract request ID if available
 	if requestIDValue := ctx.Value("request_id"); requestIDValue != nil {
 		if rid, ok := requestIDValue.(string); ok {
 			entry.RequestID = rid
 		}
 	}
+}
 
-	// Extract timing information if available
+// extractTiming extracts timing information from context
+func (l *PostgresLogger) extractTiming(entry *LogEntry, ctx context.Context) {
 	if startTimeValue := ctx.Value("request_start_time"); startTimeValue != nil {
 		if startTime, ok := startTimeValue.(time.Time); ok {
 			entry.ResponseTimeMs = int(time.Since(startTime).Milliseconds())
 		}
 	}
+}
 
-	// Extract request body if available (limit size to prevent DB bloat)
-	if reqBodyValue := ctx.Value("request_body"); reqBodyValue != nil {
-		if reqBody, ok := reqBodyValue.([]byte); ok {
-			if len(reqBody) < 10000 { // Limit to 10KB
-				entry.RequestBody = string(reqBody)
-			} else {
-				entry.RequestBody = string(reqBody[:10000]) + "... [truncated]"
-			}
-		}
-	}
+// extractBodies extracts request and response bodies from context
+func (l *PostgresLogger) extractBodies(entry *LogEntry, ctx context.Context) {
+	// Request/Response body logging removed for security
+}
 
-	// Extract response body if available (limit size)
-	if respBodyValue := ctx.Value("response_body"); respBodyValue != nil {
-		if respBody, ok := respBodyValue.([]byte); ok {
-			if len(respBody) < 10000 { // Limit to 10KB
-				entry.ResponseBody = string(respBody)
-			} else {
-				entry.ResponseBody = string(respBody[:10000]) + "... [truncated]"
-			}
-		}
-	}
-
-	// Extract streaming status
+// extractStreaming extracts streaming-related information from context
+func (l *PostgresLogger) extractStreaming(entry *LogEntry, ctx context.Context) {
 	if streamingValue := ctx.Value("is_streaming"); streamingValue != nil {
 		if isStreaming, ok := streamingValue.(bool); ok {
 			entry.IsStreaming = isStreaming
 		}
 	}
 
-	// Extract stream status
 	if streamStatusValue := ctx.Value("stream_status"); streamStatusValue != nil {
 		if streamStatus, ok := streamStatusValue.(string); ok {
 			entry.StreamStatus = streamStatus
 		}
 	}
+}
 
-	// Extract IP address
+// extractClientInfo extracts client IP and user agent from context
+func (l *PostgresLogger) extractClientInfo(entry *LogEntry, ctx context.Context) {
 	if ipValue := ctx.Value("client_ip"); ipValue != nil {
 		if ip, ok := ipValue.(string); ok {
 			entry.IPAddress = ip
 		}
 	}
 
-	// Extract user agent
 	if uaValue := ctx.Value("user_agent"); uaValue != nil {
 		if ua, ok := uaValue.(string); ok {
 			entry.UserAgent = ua
 		}
 	}
+}
 
-	// Extract request information if available
+// extractBifrostData extracts Bifrost request and response information from context
+func (l *PostgresLogger) extractBifrostData(entry *LogEntry, ctx context.Context) {
+	l.extractBifrostRequest(entry, ctx)
+	l.extractBifrostResponse(entry, ctx)
+}
+
+// extractBifrostRequest extracts Bifrost request information from context
+func (l *PostgresLogger) extractBifrostRequest(entry *LogEntry, ctx context.Context) {
 	if reqValue := ctx.Value("bifrost_request"); reqValue != nil {
 		if req, ok := reqValue.(*schemas.BifrostRequest); ok {
 			entry.ModelProvider = string(req.Provider)
@@ -341,8 +384,10 @@ func (l *PostgresLogger) enrichFromContext(entry *LogEntry, ctx context.Context)
 			}
 		}
 	}
+}
 
-	// Extract response information if available
+// extractBifrostResponse extracts Bifrost response information from context
+func (l *PostgresLogger) extractBifrostResponse(entry *LogEntry, ctx context.Context) {
 	if respValue := ctx.Value("bifrost_response"); respValue != nil {
 		if resp, ok := respValue.(*schemas.BifrostResponse); ok {
 			entry.StatusCode = 200
@@ -365,8 +410,10 @@ func (l *PostgresLogger) enrichFromContext(entry *LogEntry, ctx context.Context)
 			}
 		}
 	}
+}
 
-	// Extract error information if available
+// extractErrorInfo extracts error information from context
+func (l *PostgresLogger) extractErrorInfo(entry *LogEntry, ctx context.Context) {
 	if errValue := ctx.Value("bifrost_error"); errValue != nil {
 		if bifrostErr, ok := errValue.(*schemas.BifrostError); ok {
 			if bifrostErr.StatusCode != nil {
@@ -418,34 +465,32 @@ func (l *PostgresLogger) categorizeError(bifrostErr *schemas.BifrostError) strin
 	if bifrostErr.StatusCode == nil {
 		return "unknown"
 	}
-
-	switch *bifrostErr.StatusCode {
-	case 400:
-		return "client_error"
-	case 401:
-		return "auth_error"
-	case 403:
-		return "permission_error"
-	case 404:
-		return "not_found"
-	case 429:
-		return "rate_limit"
-	case 500, 502, 503, 504:
-		return "server_error"
-	default:
-		if *bifrostErr.StatusCode >= 400 && *bifrostErr.StatusCode < 500 {
-			return "client_error"
-		}
-		if *bifrostErr.StatusCode >= 500 {
-			return "server_error"
-		}
-		return "unknown"
-	}
+	return categorizeHTTPStatus(*bifrostErr.StatusCode)
 }
 
 // LogAPIRequestWithContext logs an API request with enhanced context and detailed token tracking
 func (l *PostgresLogger) LogAPIRequestWithContext(userID uuid.UUID, requestType, model, provider string, statusCode int, errorMessage string, responseTimeMs int, tokensUsed int, requestID, clientIP, userAgent string, isStreaming bool, requestBody, responseBody []byte) {
 	entry := getLogEntry() // Use pool
+	
+	l.populateBasicFields(entry, userID, requestType, model, provider, statusCode, errorMessage, responseTimeMs, requestID, clientIP, userAgent, isStreaming)
+	l.populateTokenTracking(entry, tokensUsed, requestType)
+	l.populateRequestResponseData(entry, requestType, requestBody, responseBody)
+	l.populateStreamingStatus(entry, isStreaming, statusCode)
+	l.populateErrorCategory(entry, errorMessage, statusCode)
+	
+	// Queue for async processing
+	select {
+	case l.logChan <- entry:
+		// Successfully queued
+	default:
+		// Channel is full, fall back to sync logging
+		l.processLogEntry(entry)
+		putLogEntry(entry)
+	}
+}
+
+// populateBasicFields sets the basic log entry fields
+func (l *PostgresLogger) populateBasicFields(entry *LogEntry, userID uuid.UUID, requestType, model, provider string, statusCode int, errorMessage string, responseTimeMs int, requestID, clientIP, userAgent string, isStreaming bool) {
 	entry.UserID = &userID
 	entry.Level = "INFO"
 	entry.Message = fmt.Sprintf("API request: %s", requestType)
@@ -460,34 +505,30 @@ func (l *PostgresLogger) LogAPIRequestWithContext(userID uuid.UUID, requestType,
 	entry.UserAgent = userAgent
 	entry.IsStreaming = isStreaming
 	entry.CreatedAt = time.Now()
-	
-	// Enhanced token tracking
+}
+
+// populateTokenTracking sets token usage fields with estimation
+func (l *PostgresLogger) populateTokenTracking(entry *LogEntry, tokensUsed int, requestType string) {
 	entry.TotalTokens = tokensUsed
 	// TODO: Extract detailed token breakdown from response
-	// For now, we estimate: ~75% completion, ~25% prompt for chat/completion requests
+	// For now, we estimate based on typical chat/completion ratios
 	if tokensUsed > 0 && (requestType == "chat" || requestType == "completion") {
-		entry.CompletionTokens = int(float64(tokensUsed) * 0.75)
+		entry.CompletionTokens = int(float64(tokensUsed) * TOKEN_ESTIMATION_RATIO)
 		entry.PromptTokens = tokensUsed - entry.CompletionTokens
 	}
-	
+}
+
+// populateRequestResponseData sets request/response data fields
+func (l *PostgresLogger) populateRequestResponseData(entry *LogEntry, requestType string, requestBody, responseBody []byte) {
 	// Determine input/output types based on request
 	entry.InputType = l.determineInputType(requestType, requestBody)
 	entry.OutputType = l.determineOutputType(requestType, responseBody)
 
-	// Add request/response bodies if not too large
-	if len(requestBody) < 10000 {
-		entry.RequestBody = string(requestBody)
-	} else if len(requestBody) > 0 {
-		entry.RequestBody = string(requestBody[:10000]) + "... [truncated]"
-	}
-	
-	if len(responseBody) < 10000 {
-		entry.ResponseBody = string(responseBody)
-	} else if len(responseBody) > 0 {
-		entry.ResponseBody = string(responseBody[:10000]) + "... [truncated]"
-	}
+	// Request/Response body logging removed for security
+}
 
-	// Set stream status based on conditions
+// populateStreamingStatus sets streaming-related status fields
+func (l *PostgresLogger) populateStreamingStatus(entry *LogEntry, isStreaming bool, statusCode int) {
 	if isStreaming {
 		if statusCode >= 200 && statusCode < 300 {
 			entry.StreamStatus = "complete"
@@ -495,20 +536,12 @@ func (l *PostgresLogger) LogAPIRequestWithContext(userID uuid.UUID, requestType,
 			entry.StreamStatus = "error"
 		}
 	}
+}
 
-	// Categorize errors
+// populateErrorCategory sets error categorization fields
+func (l *PostgresLogger) populateErrorCategory(entry *LogEntry, errorMessage string, statusCode int) {
 	if errorMessage != "" {
-		entry.ErrorCategory = l.categorizeErrorByStatus(statusCode)
-	}
-
-	// Queue for async processing
-	select {
-	case l.logChan <- entry:
-		// Successfully queued
-	default:
-		// Channel is full, fall back to sync logging
-		l.processLogEntry(entry)
-		putLogEntry(entry)
+		entry.ErrorCategory = categorizeHTTPStatus(statusCode)
 	}
 }
 
@@ -517,31 +550,6 @@ func (l *PostgresLogger) LogAPIRequest(userID uuid.UUID, requestType, model, pro
 	l.LogAPIRequestWithContext(userID, requestType, model, provider, statusCode, errorMessage, responseTimeMs, tokensUsed, fmt.Sprintf("api-%d", time.Now().UnixNano()), "", "", false, nil, nil)
 }
 
-// categorizeErrorByStatus categorizes errors by HTTP status code
-func (l *PostgresLogger) categorizeErrorByStatus(statusCode int) string {
-	switch statusCode {
-	case 400:
-		return "client_error"
-	case 401:
-		return "auth_error"
-	case 403:
-		return "permission_error"
-	case 404:
-		return "not_found"
-	case 429:
-		return "rate_limit"
-	case 500, 502, 503, 504:
-		return "server_error"
-	default:
-		if statusCode >= 400 && statusCode < 500 {
-			return "client_error"
-		}
-		if statusCode >= 500 {
-			return "server_error"
-		}
-		return "success"
-	}
-}
 
 // LogStreamingUpdate logs a streaming response update
 func (l *PostgresLogger) LogStreamingUpdate(userID uuid.UUID, requestID string, status string, partialContent string) {
@@ -552,7 +560,7 @@ func (l *PostgresLogger) LogStreamingUpdate(userID uuid.UUID, requestID string, 
 	entry.RequestID = requestID
 	entry.IsStreaming = true
 	entry.StreamStatus = status
-	entry.ResponseBody = partialContent
+	// Response body logging removed for security
 	entry.CreatedAt = time.Now()
 
 	// Queue for async processing
@@ -596,43 +604,35 @@ func (l *PostgresLogger) StartPeriodicCleanup(cleanupInterval time.Duration, ret
 
 // determineInputType analyzes the request to determine input type
 func (l *PostgresLogger) determineInputType(requestType string, requestBody []byte) string {
-	switch requestType {
-	case "chat":
-		return "text"
-	case "completion":
-		return "text"
-	case "embedding":
-		return "text"
-	case "speech":
-		return "audio"
-	case "transcription":
-		return "audio"
-	default:
-		// Try to detect from request body
-		if len(requestBody) > 0 {
-			// Simple heuristic: if body contains "audio" or "image" keywords
-			bodyStr := string(requestBody)
-			if strings.Contains(bodyStr, "audio") || strings.Contains(bodyStr, "speech") {
-				return "audio"
-			}
-			if strings.Contains(bodyStr, "image") || strings.Contains(bodyStr, "vision") {
-				return "image"
-			}
-		}
+	if inputType, exists := requestTypeToInputType[requestType]; exists {
+		return inputType
+	}
+	return l.detectInputTypeFromBody(requestBody)
+}
+
+// detectInputTypeFromBody detects input type from request body content
+func (l *PostgresLogger) detectInputTypeFromBody(requestBody []byte) string {
+	if len(requestBody) == 0 {
 		return "text"
 	}
+	
+	// Simple heuristic: if body contains keywords
+	bodyStr := string(requestBody)
+	if strings.Contains(bodyStr, "audio") || strings.Contains(bodyStr, "speech") {
+		return "audio"
+	}
+	if strings.Contains(bodyStr, "image") || strings.Contains(bodyStr, "vision") {
+		return "image"
+	}
+	return "text"
 }
 
 // determineOutputType analyzes the response to determine output type
-func (l *PostgresLogger) determineOutputType(requestType string, responseBody []byte) string {
-	switch requestType {
-	case "speech":
-		return "audio"
-	case "transcription":
-		return "text"
-	default:
-		return "text"
+func (l *PostgresLogger) determineOutputType(requestType string, _ []byte) string {
+	if outputType, exists := requestTypeToOutputType[requestType]; exists {
+		return outputType
 	}
+	return "text" // default
 }
 
 // Close shuts down the async workers gracefully
@@ -759,92 +759,94 @@ func (l *PostgresLogger) GetTokenUsageByModel(userID uuid.UUID, timeRange time.D
 	return usage, nil
 }
 
+// TokenUsageStats represents detailed token usage statistics
+type TokenUsageStats struct {
+	TotalTokens      int `json:"total_tokens"`
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	CachedTokens     int `json:"cached_tokens,omitempty"`
+	AudioTokens      int `json:"audio_tokens,omitempty"`
+	ReasoningTokens  int `json:"reasoning_tokens,omitempty"`
+	RequestCount     int `json:"request_count"`
+}
+
 // AdvancedTokenUsage provides comprehensive token usage statistics
 type AdvancedTokenUsage struct {
-	TotalTokens      int                             `json:"total_tokens"`
-	PromptTokens     int                             `json:"prompt_tokens"`
-	CompletionTokens int                             `json:"completion_tokens"`
-	CachedTokens     int                             `json:"cached_tokens,omitempty"`
-	AudioTokens      int                             `json:"audio_tokens,omitempty"`
-	ReasoningTokens  int                             `json:"reasoning_tokens,omitempty"`
-	ByModel          map[string]*ModelTokenUsage     `json:"by_model"`
-	ByProvider       map[string]*ProviderTokenUsage  `json:"by_provider"`
-}
-
-// ModelTokenUsage tracks detailed token usage for a specific model
-type ModelTokenUsage struct {
-	TotalTokens      int `json:"total_tokens"`
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	CachedTokens     int `json:"cached_tokens,omitempty"`
-	AudioTokens      int `json:"audio_tokens,omitempty"`
-	ReasoningTokens  int `json:"reasoning_tokens,omitempty"`
-	RequestCount     int `json:"request_count"`
-}
-
-// ProviderTokenUsage tracks detailed token usage for a specific provider
-type ProviderTokenUsage struct {
-	TotalTokens      int `json:"total_tokens"`
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	CachedTokens     int `json:"cached_tokens,omitempty"`
-	AudioTokens      int `json:"audio_tokens,omitempty"`
-	ReasoningTokens  int `json:"reasoning_tokens,omitempty"`
-	RequestCount     int `json:"request_count"`
+	TokenUsageStats
+	ByModel    map[string]*TokenUsageStats `json:"by_model"`
+	ByProvider map[string]*TokenUsageStats `json:"by_provider"`
 }
 
 // GetAdvancedTokenUsageForUser returns comprehensive token usage statistics
 func (l *PostgresLogger) GetAdvancedTokenUsageForUser(userID uuid.UUID, timeRange time.Duration) (*AdvancedTokenUsage, error) {
-	cutoff := time.Now().Add(-timeRange)
-	
-	var logs []LogEntry
-	err := l.db.Where("user_id = ? AND created_at >= ? AND total_tokens > 0", userID, cutoff).Find(&logs).Error
+	logs, err := l.getTokenUsageLogs(userID, timeRange)
 	if err != nil {
 		return nil, err
 	}
+	return l.aggregateTokenUsage(logs), nil
+}
 
+// getTokenUsageLogs fetches log entries with token usage for a user within a time range
+func (l *PostgresLogger) getTokenUsageLogs(userID uuid.UUID, timeRange time.Duration) ([]LogEntry, error) {
+	cutoff := time.Now().Add(-timeRange)
+	var logs []LogEntry
+	err := l.db.Where("user_id = ? AND created_at >= ? AND total_tokens > 0", userID, cutoff).Find(&logs).Error
+	return logs, err
+}
+
+// aggregateTokenUsage processes log entries and aggregates token usage statistics
+func (l *PostgresLogger) aggregateTokenUsage(logs []LogEntry) *AdvancedTokenUsage {
 	usage := &AdvancedTokenUsage{
-		ByModel:    make(map[string]*ModelTokenUsage),
-		ByProvider: make(map[string]*ProviderTokenUsage),
+		ByModel:    make(map[string]*TokenUsageStats),
+		ByProvider: make(map[string]*TokenUsageStats),
 	}
 
 	for _, log := range logs {
-		// Accumulate totals
-		usage.TotalTokens += log.TotalTokens
-		usage.PromptTokens += log.PromptTokens
-		usage.CompletionTokens += log.CompletionTokens
-		usage.CachedTokens += log.CachedTokens
-		usage.AudioTokens += log.AudioTokens
-		usage.ReasoningTokens += log.ReasoningTokens
-
-		// Accumulate by model
-		if usage.ByModel[log.ModelName] == nil {
-			usage.ByModel[log.ModelName] = &ModelTokenUsage{}
-		}
-		modelUsage := usage.ByModel[log.ModelName]
-		modelUsage.TotalTokens += log.TotalTokens
-		modelUsage.PromptTokens += log.PromptTokens
-		modelUsage.CompletionTokens += log.CompletionTokens
-		modelUsage.CachedTokens += log.CachedTokens
-		modelUsage.AudioTokens += log.AudioTokens
-		modelUsage.ReasoningTokens += log.ReasoningTokens
-		modelUsage.RequestCount++
-
-		// Accumulate by provider
-		if usage.ByProvider[log.ModelProvider] == nil {
-			usage.ByProvider[log.ModelProvider] = &ProviderTokenUsage{}
-		}
-		providerUsage := usage.ByProvider[log.ModelProvider]
-		providerUsage.TotalTokens += log.TotalTokens
-		providerUsage.PromptTokens += log.PromptTokens
-		providerUsage.CompletionTokens += log.CompletionTokens
-		providerUsage.CachedTokens += log.CachedTokens
-		providerUsage.AudioTokens += log.AudioTokens
-		providerUsage.ReasoningTokens += log.ReasoningTokens
-		providerUsage.RequestCount++
+		l.accumulateOverallTokens(usage, log)
+		l.accumulateModelTokens(usage, log)
+		l.accumulateProviderTokens(usage, log)
 	}
 
-	return usage, nil
+	return usage
+}
+
+// accumulateOverallTokens adds token counts to the overall usage totals
+func (l *PostgresLogger) accumulateOverallTokens(usage *AdvancedTokenUsage, log LogEntry) {
+	usage.TotalTokens += log.TotalTokens
+	usage.PromptTokens += log.PromptTokens
+	usage.CompletionTokens += log.CompletionTokens
+	usage.CachedTokens += log.CachedTokens
+	usage.AudioTokens += log.AudioTokens
+	usage.ReasoningTokens += log.ReasoningTokens
+}
+
+// accumulateModelTokens adds token counts to model-specific usage statistics
+func (l *PostgresLogger) accumulateModelTokens(usage *AdvancedTokenUsage, log LogEntry) {
+	if usage.ByModel[log.ModelName] == nil {
+		usage.ByModel[log.ModelName] = &TokenUsageStats{}
+	}
+	modelUsage := usage.ByModel[log.ModelName]
+	l.addTokensToStats(modelUsage, log)
+}
+
+// accumulateProviderTokens adds token counts to provider-specific usage statistics
+func (l *PostgresLogger) accumulateProviderTokens(usage *AdvancedTokenUsage, log LogEntry) {
+	if usage.ByProvider[log.ModelProvider] == nil {
+		usage.ByProvider[log.ModelProvider] = &TokenUsageStats{}
+	}
+	providerUsage := usage.ByProvider[log.ModelProvider]
+	l.addTokensToStats(providerUsage, log)
+}
+
+// addTokensToStats is a helper to add token counts from a log entry to token usage stats
+func (l *PostgresLogger) addTokensToStats(stats *TokenUsageStats, log LogEntry) {
+	stats.TotalTokens += log.TotalTokens
+	stats.PromptTokens += log.PromptTokens
+	stats.CompletionTokens += log.CompletionTokens
+	stats.CachedTokens += log.CachedTokens
+	stats.AudioTokens += log.AudioTokens
+	stats.ReasoningTokens += log.ReasoningTokens
+	stats.RequestCount++
 }
 
 // GetEnhancedLogsForUser returns recent logs with detailed token information

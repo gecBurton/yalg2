@@ -21,10 +21,12 @@ func setupAuthMiddlewareTest(t *testing.T) (*AuthMiddleware, *gorm.DB) {
 		PublicRoutes:    []string{"/auth/*", "/public/*"},
 	}
 
-	middleware, err := NewAuthMiddleware(config, db)
+	service, err := NewAuthService(db)
 	if err != nil {
-		t.Fatalf("Failed to create auth middleware: %v", err)
+		t.Fatalf("Failed to create auth service: %v", err)
 	}
+	
+	middleware := NewAuthMiddleware(config, service)
 
 	return middleware, db
 }
