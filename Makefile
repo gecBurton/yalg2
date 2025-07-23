@@ -54,7 +54,7 @@ clean: stop-services
 # Run tests
 test:
 	@echo "Running tests..."
-	go test ./...
+	go test -p 1 ./...
 
 # Run linter
 lint:
