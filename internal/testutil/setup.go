@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	"os"
 	"testing"
 
 	"gorm.io/driver/postgres"
@@ -9,8 +10,13 @@ import (
 
 // SetupTestDB creates a PostgreSQL test database connection with clean state
 func SetupTestDB(t *testing.T, models ...interface{}) *gorm.DB {
-	// Use the same PostgreSQL connection as in docker-compose
-	dsn := "host=localhost user=bifrost password=bifrost123 dbname=bifrost port=5432 sslmode=disable"
+	// Use DATABASE_URL if set (for CI), otherwise use local development defaults
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		// Local development default (matches docker-compose)
+		dsn = "host=localhost user=bifrost password=bifrost123 dbname=bifrost port=5432 sslmode=disable"
+	}
+	
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
 		t.Skipf("Failed to connect to test database (PostgreSQL may not be running): %v", err)
