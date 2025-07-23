@@ -13,7 +13,7 @@ A government-focused AI proxy built on [Bifrost](https://github.com/maximhq/bifr
 
 ```bash
 # Start services
-docker-compose up -d
+docker compose up -d
 
 # Build and run
 go build -o bifrost main.go

@@ -23,7 +23,7 @@ build:
 # Start PostgreSQL and Dex services
 start-services:
 	@echo "Starting PostgreSQL and Dex services..."
-	docker-compose up -d
+	docker compose up -d
 	@echo "Waiting for services to be ready..."
 	@sleep 5
 	@echo "Services started. PostgreSQL on :5432, Dex on :5556"
@@ -31,7 +31,7 @@ start-services:
 # Stop services
 stop-services:
 	@echo "Stopping services..."
-	docker-compose down
+	docker- ompose down
 
 # Run: start services and run bifrost locally
 run: start-services build
@@ -46,7 +46,7 @@ run: start-services build
 # Clean up everything
 clean: stop-services
 	@echo "Cleaning up..."
-	docker-compose down -v
+	docker compose down -v
 	rm -f bifrost
 	@echo "Cleanup complete"
 

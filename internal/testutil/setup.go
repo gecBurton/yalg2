@@ -13,10 +13,10 @@ func SetupTestDB(t *testing.T, models ...interface{}) *gorm.DB {
 	// Use DATABASE_URL if set (for CI), otherwise use local development defaults
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		// Local development default (matches docker-compose)
+		// Local development default (matches docker compose)
 		dsn = "host=localhost user=bifrost password=bifrost123 dbname=bifrost port=5432 sslmode=disable"
 	}
-	
+
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
 		t.Skipf("Failed to connect to test database (PostgreSQL may not be running): %v", err)
