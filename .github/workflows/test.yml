@@ -33,26 +33,21 @@ jobs:
     
     - name: Install dependencies
       run: go mod download
-    
-    - name: Run middleware tests
+        
+    - name: Run all tests
       env:
         DATABASE_URL: "postgres://bifrost:bifrost123@localhost:5432/bifrost?sslmode=disable"
-      run: go test -v -race -coverprofile=coverage.out ./internal/middleware/...
+      run: go test -v -race -coverprofile=coverage.out ./...
     
-    - name: Run all tests (allow failures)
-      env:
-        DATABASE_URL: "postgres://bifrost:bifrost123@localhost:5432/bifrost?sslmode=disable"
-      run: go test -v -race ./... || echo "Some tests failed, but continuing..."
-    
-    - name: Check middleware coverage
+    - name: Check coverage
       run: |
         go tool cover -func=coverage.out
         COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
-        echo "Middleware coverage: ${COVERAGE}%"
+        echo "Coverage: ${COVERAGE}%"
         
-        # Fail if middleware coverage is below 60%
+        # Fail if coverage is below 60%
         if (( $(echo "$COVERAGE < 60" | bc -l) )); then
-          echo "Middleware coverage ${COVERAGE}% is below minimum 60%"
+          echo "Coverage ${COVERAGE}% is below minimum 60%"
           exit 1
         fi
     
