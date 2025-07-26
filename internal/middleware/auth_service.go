@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"regexp"
 	"time"
 
 	"bifrost-gov/internal/database"
@@ -71,6 +73,31 @@ func (s *AuthService) FindOrCreateUser(sub string, claims map[string]any) (*data
 	err := s.db.Session(&gorm.Session{Logger: s.db.Logger.LogMode(logger.Silent)}).Where("sub = ?", sub).First(user).Error
 
 	if err == nil {
+		// User exists, update their details but preserve admin status
+		email, _ := claims["email"].(string)
+		name, _ := claims["name"].(string)
+
+		// Update user details if they've changed, and check for admin privileges
+		updated := false
+		if user.Email != email && email != "" {
+			user.Email = email
+			updated = true
+		}
+		if user.Name != name && name != "" {
+			user.Name = name
+			updated = true
+		}
+
+		// Note: Admin privileges are only granted during initial seeding, not on every login
+		// This prevents privilege escalation attacks via environment variable manipulation
+
+		if updated {
+			if err := s.db.Save(user).Error; err != nil {
+				return nil, fmt.Errorf("failed to update user details: %w", err)
+			}
+			log.Printf("Updated user details for: %s (%s)", user.Email, user.ID)
+		}
+
 		return user, nil
 	}
 
@@ -79,14 +106,23 @@ func (s *AuthService) FindOrCreateUser(sub string, claims map[string]any) (*data
 	}
 
 	// Create new user
-	email, _ := claims["email"].(string)
-	name, _ := claims["name"].(string)
+	newEmail, _ := claims["email"].(string)
+	newName, _ := claims["name"].(string)
+
+	// Check if this user should be granted admin privileges
+	initialAdminEmail := os.Getenv("INITIAL_ADMIN_EMAIL")
+	isInitialAdmin := initialAdminEmail != "" && newEmail == initialAdminEmail
 
 	user = &database.User{
-		ID:    uuid.New(),
-		Sub:   sub,
-		Email: email,
-		Name:  name,
+		ID:      uuid.New(),
+		Sub:     sub,
+		Email:   newEmail,
+		Name:    newName,
+		IsAdmin: isInitialAdmin,
+	}
+
+	if isInitialAdmin {
+		log.Printf("Granting admin privileges to initial admin user: %s", newEmail)
 	}
 
 	if err := s.db.Create(user).Error; err != nil {
@@ -147,4 +183,67 @@ func (s *AuthService) FindUser(userID uuid.UUID) (*database.User, error) {
 // GetConfig returns the OIDC configuration
 func (s *AuthService) GetConfig() *OIDCConfig {
 	return s.config
+}
+
+// IsUserAdmin checks if a user has admin privileges
+func (s *AuthService) IsUserAdmin(userID uuid.UUID) (bool, error) {
+	user := &database.User{}
+	err := s.db.Where("id = ?", userID).First(user).Error
+	if err != nil {
+		return false, err
+	}
+	return user.IsAdmin, nil
+}
+
+// isValidEmail validates email format
+func isValidEmail(email string) bool {
+	if email == "" {
+		return false
+	}
+	// RFC 5322 compliant regex (simplified)
+	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+	return emailRegex.MatchString(email) && len(email) <= 254
+}
+
+// SeedInitialAdmin creates or updates the initial admin user based on environment variable
+// This is a one-time operation that should only run during application startup
+func (s *AuthService) SeedInitialAdmin() error {
+	initialAdminEmail := os.Getenv("INITIAL_ADMIN_EMAIL")
+	if initialAdminEmail == "" {
+		log.Println("No INITIAL_ADMIN_EMAIL environment variable set, skipping admin user seeding")
+		return nil
+	}
+
+	// Validate email format
+	if !isValidEmail(initialAdminEmail) {
+		return fmt.Errorf("INITIAL_ADMIN_EMAIL has invalid email format: %s", initialAdminEmail)
+	}
+
+	log.Printf("ADMIN_SEED: Seeding initial admin user with email: %s", initialAdminEmail)
+
+	// Check if user already exists by email
+	user := &database.User{}
+	err := s.db.Where("email = ?", initialAdminEmail).First(user).Error
+	
+	if err == nil {
+		// User exists, ensure they are admin
+		if !user.IsAdmin {
+			user.IsAdmin = true
+			if err := s.db.Save(user).Error; err != nil {
+				return fmt.Errorf("failed to update user to admin: %w", err)
+			}
+			log.Printf("ADMIN_GRANT: Updated existing user %s (%s) to admin", user.Email, user.ID)
+		} else {
+			log.Printf("ADMIN_SEED: User %s (%s) is already an admin", user.Email, user.ID)
+		}
+		return nil
+	}
+
+	if err != gorm.ErrRecordNotFound {
+		return fmt.Errorf("failed to query for initial admin user: %w", err)
+	}
+
+	// User doesn't exist yet - they will be made admin when they first log in
+	log.Printf("ADMIN_SEED: User with email %s not found yet. They will be granted admin privileges when they first log in via OIDC.", initialAdminEmail)
+	return nil
 }

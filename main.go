@@ -94,7 +94,6 @@ func (a *accountWrapper) GetKeysForProvider(ctx *context.Context, providerKey sc
 	return a.BaseAccount.GetKeysForProvider(providerKey)
 }
 
-
 // init initializes command line flags and validates required configuration.
 // It sets up the following flags:
 //   - port: Server port (default: 8080)
@@ -131,6 +130,26 @@ func corsMiddleware(next fasthttp.RequestHandler) fasthttp.RequestHandler {
 	}
 }
 
+// adminPageHandler serves the admin.html file for admin routes
+func adminPageHandler(ctx *fasthttp.RequestCtx) {
+	// Serve admin.html for admin routes
+	data, err := os.ReadFile("html/admin.html")
+	if err != nil {
+		ctx.SetStatusCode(fasthttp.StatusNotFound)
+		ctx.SetBodyString("404 - admin.html not found")
+		return
+	}
+
+	// Set content type for HTML
+	ctx.SetContentType("text/html; charset=utf-8")
+
+	// Set cache headers for HTML (no cache)
+	ctx.Response.Header.Set("Cache-Control", "no-cache")
+
+	// Send the file content
+	ctx.SetBody(data)
+}
+
 // uiHandler serves the local index.html file
 func uiHandler(ctx *fasthttp.RequestCtx) {
 	// Get the request path
@@ -142,7 +161,7 @@ func uiHandler(ctx *fasthttp.RequestCtx) {
 	// For root path or any SPA route, serve index.html
 	if cleanPath == "/" || !strings.Contains(filepath.Base(cleanPath), ".") {
 		// Serve index.html for root and SPA routes
-		data, err := os.ReadFile("index.html")
+		data, err := os.ReadFile("html/index.html")
 		if err != nil {
 			ctx.SetStatusCode(fasthttp.StatusNotFound)
 			ctx.SetBodyString("404 - index.html not found")
@@ -167,7 +186,7 @@ func uiHandler(ctx *fasthttp.RequestCtx) {
 	// Check if file exists
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		// File not found, serve index.html as fallback for SPA routing
-		data, err := os.ReadFile("index.html")
+		data, err := os.ReadFile("html/index.html")
 		if err != nil {
 			ctx.SetStatusCode(fasthttp.StatusNotFound)
 			ctx.SetBodyString("404 - File not found")
@@ -274,7 +293,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create auth service: %v", err)
 	}
-	
+
+	// Seed initial admin user if configured
+	if err := authService.SeedInitialAdmin(); err != nil {
+		log.Fatalf("Failed to seed initial admin user: %v", err)
+	}
+
 	// Initialize authentication middleware
 	authMiddleware := middleware.NewAuthMiddleware(middleware.DefaultAuthConfig(), authService)
 	log.Println("Authentication middleware initialized")
@@ -284,7 +308,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create PostgreSQL logger: %v", err)
 	}
-	
+
 	// Start periodic cleanup (clean logs older than 30 days, run every 24 hours)
 	postgresLogger.StartPeriodicCleanup(24*time.Hour, 30*24*time.Hour)
 	log.Println("PostgreSQL logger initialized with async processing and cleanup")
@@ -329,6 +353,11 @@ func main() {
 	webAuthHandler := middleware.NewWebAuthHandler(store, authService)
 	log.Println("Web auth handler configured with shared database access")
 
+	// Create admin middleware and handler
+	adminMiddleware := middleware.NewAdminMiddleware(authService)
+	adminHandler := middleware.NewAdminHandler(sharedDB)
+	log.Println("Admin handler configured with admin middleware")
+
 	// Create unified logging handler with PostgreSQL logger (includes basic + enhanced endpoints)
 	loggingHandler := middleware.NewLoggingHandler(postgresLogger)
 	log.Println("Unified logging handler configured with PostgreSQL logger (basic + enhanced endpoints)")
@@ -349,6 +378,12 @@ func main() {
 
 	// Register unified logging routes (includes /metrics + /api/* endpoints)
 	loggingHandler.RegisterRoutes(r)
+
+	// Register admin routes (protected by admin middleware)
+	adminHandler.RegisterRoutes(r, adminMiddleware)
+
+	// Add admin UI route (protected by admin middleware)
+	r.GET("/admin/users", adminMiddleware.Handler(adminPageHandler))
 
 	// Add UI routes - serve the local index.html (these should be LAST)
 	r.GET("/", uiHandler)

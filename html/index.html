@@ -61,6 +61,19 @@
                     <div id="authenticated-view" style="display: none;">
                         <h1 class="govuk-heading-xl">LLM Gateway</h1>
                         
+                        <!-- Admin Navigation -->
+                        <div id="admin-nav" style="display: none; margin-bottom: 30px;">
+                            <nav class="govuk-breadcrumbs">
+                                <ol class="govuk-breadcrumbs__list">
+                                    <li class="govuk-breadcrumbs__list-item">
+                                        <a class="govuk-breadcrumbs__link" href="/" aria-current="page">Home</a>
+                                    </li>
+                                    <li class="govuk-breadcrumbs__list-item">
+                                        <a class="govuk-breadcrumbs__link" href="/admin/users">User Administration</a>
+                                    </li>
+                                </ol>
+                            </nav>
+                        </div>
                         <!-- User Token -->
                         <p class="govuk-body">Copy this token to authenticate your API requests.</p>
                         <details class="govuk-details" data-module="govuk-details">
@@ -175,6 +188,11 @@
             
             document.getElementById('user-token').textContent = userToken;
             updateCurlExample();
+            
+            // Check if user is admin and show admin navigation
+            if (authData.is_admin) {
+                document.getElementById('admin-nav').style.display = 'block';
+            }
             
             // Load available models
             loadAvailableModels();
@@ -416,6 +434,7 @@
                 responseContent.style.color = '#d4351c';
             }
         }
+
 
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', checkAuth);
