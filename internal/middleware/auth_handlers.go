@@ -61,9 +61,10 @@ func NewAuthMiddleware(config *AuthConfig, service *AuthService) *AuthMiddleware
 func DefaultAuthConfig() *AuthConfig {
 	config := &AuthConfig{
 		ProtectedRoutes: []string{
-			"/v1/*",    // All API endpoints
-			"/metrics", // Metrics endpoint (user-specific)
-			"/api/*",   // Internal API endpoints
+			"/v1/*",      // All API endpoints
+			"/metrics",   // Metrics endpoint (user-specific)
+			"/api/*",     // Internal API endpoints
+			"/admin/*",   // Admin pages and endpoints
 		},
 		PublicRoutes: []string{
 			"/auth/*",   // Authentication flows
@@ -274,6 +275,7 @@ func (h *WebAuthHandler) statusHandler(ctx *fasthttp.RequestCtx) {
 		"user_id":       session.User.ID,
 		"email":         session.User.Email,
 		"name":          session.User.Name,
+		"is_admin":      session.User.IsAdmin,
 		"id_token":      session.IDToken,
 	}
 

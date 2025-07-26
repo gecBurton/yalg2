@@ -44,6 +44,7 @@ type User struct {
 	Sub                  string         `json:"sub" gorm:"uniqueIndex;not null"` // OIDC subject identifier
 	Email                string         `json:"email" gorm:"index"`
 	Name                 string         `json:"name"`
+	IsAdmin              bool           `json:"is_admin" gorm:"default:false"` // Admin privileges
 	MaxRequestsPerMinute int            `json:"max_requests_per_minute" gorm:"default:60"` // Rate limit
 	CreatedAt            time.Time      `json:"created_at"`
 	UpdatedAt            time.Time      `json:"updated_at"`
