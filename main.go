@@ -94,7 +94,6 @@ func (a *accountWrapper) GetKeysForProvider(ctx *context.Context, providerKey sc
 	return a.BaseAccount.GetKeysForProvider(providerKey)
 }
 
-
 // init initializes command line flags and validates required configuration.
 // It sets up the following flags:
 //   - port: Server port (default: 8080)
@@ -134,7 +133,7 @@ func corsMiddleware(next fasthttp.RequestHandler) fasthttp.RequestHandler {
 // adminPageHandler serves the admin.html file for admin routes
 func adminPageHandler(ctx *fasthttp.RequestCtx) {
 	// Serve admin.html for admin routes
-	data, err := os.ReadFile("admin.html")
+	data, err := os.ReadFile("html/admin.html")
 	if err != nil {
 		ctx.SetStatusCode(fasthttp.StatusNotFound)
 		ctx.SetBodyString("404 - admin.html not found")
@@ -162,7 +161,7 @@ func uiHandler(ctx *fasthttp.RequestCtx) {
 	// For root path or any SPA route, serve index.html
 	if cleanPath == "/" || !strings.Contains(filepath.Base(cleanPath), ".") {
 		// Serve index.html for root and SPA routes
-		data, err := os.ReadFile("index.html")
+		data, err := os.ReadFile("html/index.html")
 		if err != nil {
 			ctx.SetStatusCode(fasthttp.StatusNotFound)
 			ctx.SetBodyString("404 - index.html not found")
@@ -187,7 +186,7 @@ func uiHandler(ctx *fasthttp.RequestCtx) {
 	// Check if file exists
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		// File not found, serve index.html as fallback for SPA routing
-		data, err := os.ReadFile("index.html")
+		data, err := os.ReadFile("html/index.html")
 		if err != nil {
 			ctx.SetStatusCode(fasthttp.StatusNotFound)
 			ctx.SetBodyString("404 - File not found")
@@ -299,7 +298,7 @@ func main() {
 	if err := authService.SeedInitialAdmin(); err != nil {
 		log.Fatalf("Failed to seed initial admin user: %v", err)
 	}
-	
+
 	// Initialize authentication middleware
 	authMiddleware := middleware.NewAuthMiddleware(middleware.DefaultAuthConfig(), authService)
 	log.Println("Authentication middleware initialized")
@@ -309,7 +308,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create PostgreSQL logger: %v", err)
 	}
-	
+
 	// Start periodic cleanup (clean logs older than 30 days, run every 24 hours)
 	postgresLogger.StartPeriodicCleanup(24*time.Hour, 30*24*time.Hour)
 	log.Println("PostgreSQL logger initialized with async processing and cleanup")
